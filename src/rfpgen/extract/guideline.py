@@ -25,6 +25,8 @@ _PAPER = re.compile(r"(?<![A-Za-z0-9])(A4|A3)(?![0-9])", re.I)
 _BLIND = re.compile(
     r"블라인드|업체\s*정보\s*삭제|(?:업체|회사|제안사)\s*(?:명|로고|CI)[^.]{0,30}(?:표기|기재|노출|표시)[^.]{0,15}(?:금지|불가|않|없)"
 )
+# 극성 검사(OpenBidKit valueIssue 방식의 한국어판): 부정 표현을 먼저 판정한다
+_BLIND_NEG = re.compile(r"블라인드\s*(?:평가)?\s*(?:를|을|는|은)?\s*(?:실시하지\s*않|적용하지\s*않|하지\s*않|미실시|미적용|대상이\s*아님|해당\s*없)")
 _PRESENT_MIN = re.compile(r"발표\s*(?:시간)?\s*(?:은|는|:)?\s*(\d{1,2})\s*분")
 _QA_MIN = re.compile(r"질의\s*(?:및)?\s*응답\s*(?:시간)?\s*(?:은|는|:)?\s*(\d{1,2})\s*분")
 _PM_PRESENT = re.compile(r"(?:사업\s*수행\s*책임자|사업책임자|총괄\s*책임자|\bPM\b)[^.]{0,25}(?:직접\s*)?발표")
@@ -111,7 +113,9 @@ def extract_guideline(docs: list[Document], report: ExtractionReport,
             if g.total_size_limit_mb is None and (m := _SIZE.search(line)) and "용량" in line:
                 g.total_size_limit_mb = Extracted(value=int(m.group(1)), locators=[loc(doc, block, m.group(0))])
 
-            if g.blind is None and (m := _BLIND.search(line)):
+            if g.blind is None and (m := _BLIND_NEG.search(line)):
+                g.blind = Extracted(value=False, locators=[loc(doc, block, m.group(0))], note="블라인드 미적용 명시")
+            elif g.blind is None and (m := _BLIND.search(line)):
                 g.blind = Extracted(value=True, locators=[loc(doc, block, m.group(0))])
 
             if g.editor is None and (m := _EDITOR.search(line)) and any(k in line for k in ("작성", "편집", "프로그램", "제출")):
@@ -159,6 +163,7 @@ def extract_guideline(docs: list[Document], report: ExtractionReport,
                        [loc(doc, block, line)])
         else:
             report.add("GUIDE-PAGE-MISSING", "warning", "본문 분량 제한을 찾지 못했습니다 — 프로필 기본값을 씁니다")
+    _report_omissions(docs, g, report, skip)
     if g.blind is None:
         g.blind = Extracted(value=False, confidence=0.5, note="블라인드 관련 문구 없음")
     if g.paper is None:
@@ -167,6 +172,45 @@ def extract_guideline(docs: list[Document], report: ExtractionReport,
     g.prescribed_toc = _prescribed_toc(docs, report)
     g.required_documents = _required_docs(docs)
     return g
+
+
+_OMISSION_TOPICS: list[tuple[str, re.Pattern[str], str]] = [
+    ("min_font_pt", re.compile(r"(?:글자|글씨)\s*(?:크기|포인트)|폰트\s*크기|\bpt\s*이상"), "본문 글자 크기"),
+    ("total_size_limit_mb", re.compile(r"(?:총|전체)\s*용량|용량\s*(?:은|는|이)?\s*.{0,10}(?:이내|초과|이하)"), "제출 파일 용량"),
+    ("summary_page_limit", re.compile(r"요약\s*(?:본|제안서)\s*.{0,20}(?:쪽|페이지|매)"), "요약본 분량"),
+    ("presentation", re.compile(r"발표\s*(?:시간|는|은)\s*.{0,15}분"), "발표 시간"),
+]
+
+
+def _report_omissions(docs: list[Document], g: WritingGuideline, report: ExtractionReport, skip: set[str]) -> None:
+    for attr, pat, label in _OMISSION_TOPICS:
+        if getattr(g, attr) is not None:
+            continue
+        for doc in docs:
+            hit = next(((b, ln) for b, ln in iter_lines(doc)
+                        if not (b.kind == "cell" and b.parent in skip) and pat.search(ln)), None)
+            if hit:
+                report.add("GUIDE-OMISSION", "warning",
+                           f"{label} 관련 문구는 있지만 값을 읽지 못했습니다 — 원문을 확인해 직접 입력하세요",
+                           [loc(doc, hit[0], hit[1])])
+                break
+
+
+_PRODUCTION_RULES: list[tuple[str, re.Pattern[str]]] = [
+    ("대응표", re.compile(r"대비표|대응표|조견표|참조표|수용\s*여부")),
+    ("별지서식", re.compile(r"별지|서식\s*\d|양식")),
+    ("증빙첨부", re.compile(r"증빙|첨부|사본")),
+    ("자유서식", re.compile(r"자유\s*(?:서식|양식|형식)")),
+]
+
+
+def _production(texts: list[str]) -> tuple[str, list[str]]:
+    joined = " ".join(texts)
+    forms = [f"별지 제{n}호" for n in _FORM.findall(joined)]
+    for kind, pat in _PRODUCTION_RULES:
+        if pat.search(joined):
+            return kind, forms
+    return "미정", forms
 
 
 def _toc_from_table(grid: Grid) -> list[TocNode]:
@@ -180,6 +224,8 @@ def _toc_from_table(grid: Grid) -> list[TocNode]:
         if not m:
             continue
         chapter = TocNode(number=m.group(1), title=m.group(2).strip(), level=1)
+        # 비고·작성방법 열로 작성 방식을 태그한다(OpenBidKit content_mode의 한국어판)
+        chapter.production, chapter.form_refs = _production([c.text for c in row[1:]])  # type: ignore[assignment]
         # 같은 행의 나머지 칸에서 '1. …' 형식 하위 목차를 찾는다(비고·서식 열은 무시).
         for cell in row[1:]:
             subs = []
@@ -193,6 +239,7 @@ def _toc_from_table(grid: Grid) -> list[TocNode]:
         # 같은 장이 여러 행에 걸치면(세로 병합) 다음 행들의 하위 목차도 붙인다.
         if chapters and norm(chapters[-1].title) == norm(chapter.title):
             chapters[-1].children.extend(chapter.children)
+            chapters[-1].form_refs.extend(f for f in chapter.form_refs if f not in chapters[-1].form_refs)
         else:
             chapters.append(chapter)
     return chapters

@@ -54,6 +54,7 @@ class BudgetLine(BaseModel):
     points: float
     raw: float
     pages: int
+    target_chars: list[int] = Field(default_factory=list)  # [하한, 상한] — 쪽 × 실효 글자/쪽 × [0.8, 1.2]
 
 
 class PageBudget(BaseModel):
@@ -63,6 +64,8 @@ class PageBudget(BaseModel):
     fixed_pages: int
     distributable_pages: int
     qualitative_points: float
+    chars_per_page: int = 0
+    effective_chars_per_page: int = 0
     lines: list[BudgetLine] = Field(default_factory=list)
 
 

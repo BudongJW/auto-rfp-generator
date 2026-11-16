@@ -6,6 +6,7 @@ from ..profile import Profile
 from ..schemas.docir import Document
 from ..schemas.rfp import ExtractionReport, Rfp
 from .ambiguity import annotate_requirements, questions_from_findings
+from .compliance import extract_compliance, extract_eligibility, link_compliance_severity
 from .evaluation import extract_evaluation
 from .guideline import extract_guideline
 from .notice import extract_notice
@@ -29,6 +30,9 @@ def extract_rfp(docs: list[Document], profile: Profile) -> tuple[Rfp, Extraction
         if lc.doc_id in by_id and lc.block_id
     } - {None}
     rfp.guideline = extract_guideline(ordered, report, skip_tables=req_tables)  # type: ignore[arg-type]
+    rfp.compliance = extract_compliance(ordered, profile, report, skip_tables=req_tables)  # type: ignore[arg-type]
+    rfp.eligibility = extract_eligibility(ordered, report)
+    link_compliance_severity(rfp)
     annotate_requirements(rfp, profile.value("ambiguity.vague_terms"), report)
     questions_from_findings(rfp, report)
     report.stats["requirements"] = len(rfp.requirements)

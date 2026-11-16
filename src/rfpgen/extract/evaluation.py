@@ -11,7 +11,7 @@ import re
 
 from ..schemas.common import Extracted
 from ..schemas.docir import Document
-from ..schemas.rfp import EvalArea, EvalItem, EvaluationTable, ExtractionReport
+from ..schemas.rfp import EvalArea, EvalItem, EvalRule, EvaluationTable, ExtractionReport
 from .common import Grid, build_grids, iter_lines, loc, norm, parse_number
 
 _POINTS = ("배점", "배점한도", "점수", "배점(점)", "평가배점")
@@ -73,6 +73,34 @@ def _context_kind(doc: Document, table_index: int, lookback: int = 6) -> str | N
             n += 1
             if n >= lookback:
                 break
+    return None
+
+
+# 평가 '규칙'(점수를 매기는 방법) 판별. 제안서가 답할 '평가 질문'과 분리한다.
+# OpenBidKit_Yibiao(AGPL-3.0, 77a38f0)의 评分项/评分要求 분리 기준을 한국 평가표 표현으로 재구현.
+_RULE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("감점", re.compile(r"감점")),
+    ("가점", re.compile(r"가점")),
+    ("산식", re.compile(r"\d+\s*점\s*(?:부여|배점|만점)|\d+\s*(?:억|백만|천만)?\s*원?\s*이상\s*[:：]|[×÷]|산식|평점|구간별|비율에\s*따라|환산")),
+]
+# 등급 정의: '수(10)·우(8)…', 'A등급', '매우 우수 … 보통', '우수: 8점'처럼 등급 이름과 점수가 함께 있어야 한다.
+# '참가(', '평가('처럼 '가·미·수'로 끝나는 낱말 뒤 괄호를 등급으로 오인하지 않도록 낱말 경계를 요구한다.
+_GRADE_MARK = re.compile(r"(?:^|[\s,/·:])(?:수|우|미|양|가)\s*[:(（]\s*\d")
+_GRADE_OTHER = re.compile(r"[A-E]\s*등급|등급\s*(?:별|기준|적용)|(?:매우\s*우수|탁월).{0,30}(?:우수|보통)|(?:우수|보통|미흡)\s*[:：]\s*\d")
+_QUESTION_END = re.compile(r"(?:는가|는지|인가|평가|평가함|평가한다)\s*[.?]?$")
+
+
+def classify_criterion(text: str) -> str | None:
+    """평가 규칙이면 종류를, 평가 질문이면 None을 돌려준다."""
+    if _QUESTION_END.search(text) and not re.search(r"감점|가점", text):
+        return None
+    for kind, pat in _RULE_PATTERNS[:2]:
+        if pat.search(text):
+            return kind
+    if len(_GRADE_MARK.findall(text)) >= 2 or _GRADE_OTHER.search(text):
+        return "등급"
+    if _RULE_PATTERNS[2][1].search(text):
+        return "산식"
     return None
 
 
@@ -176,7 +204,11 @@ def extract_evaluation(docs: list[Document], report: ExtractionReport) -> Evalua
                     crit_cell = grid.origin_in_row(r, crit_col)
                     if crit_cell is not None and crit_cell.text.strip():
                         for c in _split_criteria(crit_cell.text):
-                            if c not in it.criteria:
+                            kind = classify_criterion(c)
+                            if kind is not None:
+                                table.rules.append(EvalRule(kind=kind, text=c, item_id=it.id,  # type: ignore[arg-type]
+                                                            locators=[loc(doc, crit_cell, c)]))
+                            elif c not in it.criteria:
                                 it.criteria.append(c)
                         it.locators.append(loc(doc, crit_cell))
     table.areas = [a for a in builder.areas if a.items or a.points]
@@ -209,6 +241,7 @@ def _fill_and_validate(table: EvaluationTable, report: ExtractionReport) -> None
         declared = sum(table.declared_totals)
         if abs(declared - total) > 0.01:
             report.add("EVAL-TOTAL", "info", f"소계·합계 행 합 {declared:g}점, 부문 배점 합 {total:g}점 — 표가 나뉘어 있으면 정상일 수 있습니다")
+    report.stats["eval_rules"] = len(table.rules)
     report.stats["eval_areas"] = len(table.areas)
     report.stats["eval_items"] = len(table.items())
     report.stats["eval_total_points"] = total

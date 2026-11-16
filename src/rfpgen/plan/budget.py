@@ -66,6 +66,26 @@ def _assign_points(outline: Outline, rfp: Rfp) -> None:
             ch.points = sum(c.points for c in ch.children) + (ch.points if not ch.children else 0)
 
 
+_PT_MM = 0.3528  # 1pt = 0.3528mm
+
+
+def chars_per_page(profile: Profile, rfp: Rfp) -> tuple[int, int]:
+    """쪽당 글자 수(이론 상한, 실효값). OpenBidKit_Yibiao pageMetrics(AGPL-3.0)의 계산법을 재구현.
+
+    한글은 전각이라 글자 폭 ≈ 글자 크기. 한 줄 = ⌊본문 폭 ÷ 글자 폭⌋, 한 쪽 = ⌊본문 높이 ÷ (글자 크기 × 줄간격)⌋.
+    """
+    pt = float(profile.value("page_metrics.font_pt"))
+    if rfp.guideline.min_font_pt is not None:
+        pt = max(pt, float(rfp.guideline.min_font_pt.value))
+    width = float(profile.value("page_metrics.body_width_mm"))
+    height = float(profile.value("page_metrics.body_height_mm"))
+    spacing = float(profile.value("page_metrics.line_spacing_pct")) / 100
+    per_line = math.floor(width / (pt * _PT_MM))
+    lines = math.floor(height / (pt * _PT_MM * spacing))
+    theoretical = per_line * lines
+    return theoretical, int(theoretical * float(profile.value("page_metrics.effective_ratio")))
+
+
 def build_budget(outline: Outline, rfp: Rfp, profile: Profile, report: ExtractionReport) -> PageBudget:
     _assign_points(outline, rfp)
     g = rfp.guideline
@@ -110,10 +130,12 @@ def build_budget(outline: Outline, rfp: Rfp, profile: Profile, report: Extractio
         if ch.children and ch.points > 0:
             ch.page_budget = sum(s.page_budget for s in ch.children)
 
+    theoretical, effective = chars_per_page(profile, rfp)
     lines = [
         BudgetLine(node_id=s.id, number=s.number, title=s.title, points=round(s.points, 2),
                    raw=round(distributable * s.points / total_points, 2) if total_points else 0.0,
-                   pages=s.page_budget)
+                   pages=s.page_budget,
+                   target_chars=[int(s.page_budget * effective * 0.8), int(s.page_budget * effective * 1.2)])
         for s in scored
     ]
     dense = [(s, len(s.requirements) / max(s.page_budget, 1)) for s in outline.walk()
@@ -132,6 +154,8 @@ def build_budget(outline: Outline, rfp: Rfp, profile: Profile, report: Extractio
         fixed_pages=fixed_pages,
         distributable_pages=distributable,
         qualitative_points=round(total_points, 2),
+        chars_per_page=theoretical,
+        effective_chars_per_page=effective,
         lines=lines,
     )
 

@@ -24,7 +24,8 @@ def test_analyze_cli_end_to_end(hwpx_file, tmp_path):
     assert rfp["guideline"]["main_page_limit"]["value"] == 100
 
     wb = load_workbook(out / "out" / "analysis.xlsx")
-    assert wb.sheetnames == ["추적표", "평가표", "요구사항", "목차·쪽수", "작성지침", "질의서 후보", "점검 결과"]
+    assert wb.sheetnames == ["추적표", "평가표", "요구사항", "목차·쪽수", "작성지침", "무효·감점 사유", "평가규칙",
+                             "질의서 후보", "점검 결과"]
     header = [c.value for c in wb["추적표"][1]]
     assert header == TRACE_COLUMNS
     assert header[:8] == ["요구사항 ID", "명칭", "분류", "연결 평가항목", "제안 요약", "수용 여부", "제안서 쪽", "RFP 원문 위치"]
@@ -68,3 +69,54 @@ def test_profile_override(tmp_path):
     assert (pv.value, pv.status, pv.ref) == (80, "user", "사내 기준")
     assert pv.layer.startswith("override:")
     assert p.get("evaluation.tech_cutoff_pct").layer == "builtin"
+
+
+def test_diff_between_versions(tmp_path):
+    """정정공고: 배점·분량이 바뀌고 요구사항 하나가 추가되면 고위험 변경과 영향 절을 보고한다."""
+    from hwpx import HwpxDocument
+
+    from conftest import DETAILS, EVAL_QUAL, EVAL_QUAL_SPANS, GUIDE_LINES, _hwpx_table, detail_table
+
+    def build(path, page_limit: str, extra_req: bool, func_points: str):
+        doc = HwpxDocument.new()
+        for d in DETAILS + ([("기능 요구사항", "SFR-003", "민원 통계", "통계를 제공한다", "- 월별 통계\n- 유형별 통계")]
+                            if extra_req else []):
+            rows, spans = detail_table(*d)
+            _hwpx_table(doc, rows, spans)
+        for line in GUIDE_LINES:
+            doc.add_paragraph(line.replace("100쪽", page_limit))
+        doc.add_paragraph("나. 정성적 평가(70점)")
+        table = [list(r) for r in EVAL_QUAL]
+        table[5][3] = func_points
+        _hwpx_table(doc, table, EVAL_QUAL_SPANS)
+        doc.save_to_path(str(path))
+        return path
+
+    project = tmp_path / "p"
+    v1 = build(tmp_path / "제안요청서_v1.hwpx", "100쪽", False, "15")
+    v2 = build(tmp_path / "제안요청서_v2.hwpx", "80쪽", True, "20")
+    runner = CliRunner()
+    assert runner.invoke(app, ["analyze", str(v1), "-o", str(project)]).exit_code == 0
+    assert runner.invoke(app, ["analyze", str(v2), "-o", str(project)]).exit_code == 0
+    assert (project / "plan" / "v1" / "trace.json").exists() and (project / "plan" / "v2" / "trace.json").exists()
+
+    r = runner.invoke(app, ["diff", str(project)])
+    assert r.exit_code == 0, r.output
+    d = json.loads((project / "rfp" / "diff_v1_v2.json").read_text(encoding="utf-8"))
+    changes = {(c["target"], c["key"], c["kind"]): c for c in d["changes"]}
+    assert ("requirement", "SFR-003", "added") in changes
+    page = changes[("guideline", "main_page_limit", "changed")]
+    assert (page["old"], page["new"], page["high_risk"]) == ("100", "80", True)
+    pts = changes[("eval_item", "기술 및 기능 > 기능 요구사항", "changed")]
+    assert pts["high_risk"] and "15" in pts["old"] and "20" in pts["new"]
+    assert any("기능 요구사항" in s for s in pts["affected_sections"])
+    assert "plan.budget" in d["rerun"]
+    md = (project / "out" / "diff_v1_v2.md").read_text(encoding="utf-8")
+    assert "사람 확인 필요" in md
+
+
+def test_diff_needs_two_versions(hwpx_file, tmp_path):
+    project = tmp_path / "p"
+    CliRunner().invoke(app, ["analyze", str(hwpx_file), "-o", str(project)])
+    r = CliRunner().invoke(app, ["diff", str(project)])
+    assert r.exit_code == 2

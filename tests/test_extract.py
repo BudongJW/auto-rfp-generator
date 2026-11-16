@@ -196,3 +196,75 @@ def test_grade_and_vague_terms():
     vocab = {"quantity": ["등"], "quality": ["원활"]}
     assert find_vague("서버 등의 분리, 원활한 운영", vocab) == [("quantity", "등"), ("quality", "원활")]
     assert find_vague("등급 관리", vocab) == []
+
+
+# ---- 중국 입찰서 생성기 분석에서 이식한 결정적 점검 ------------------------------------------
+
+
+def test_evaluation_rules_are_split_from_questions(maker):
+    from rfpgen.extract.evaluation import classify_criterion
+
+    m = maker()
+    m.p("정성평가")
+    m.table([
+        ["평가항목", "평가기준", "배점"],
+        ["개발 방법론", "- 단계별 산출물을 제시하였는가\n- 매우 우수: 10점, 우수: 8점, 보통: 6점\n- 분량 초과 시 1점 감점", "10"],
+    ])
+    ev = extract_evaluation([m.doc], ExtractionReport())
+    item = ev.items()[0]
+    assert item.criteria == ["단계별 산출물을 제시하였는가"]
+    assert [(r.kind, r.item_id) for r in ev.rules] == [("등급", item.id), ("감점", item.id)]
+    assert classify_criterion("최근 3년 실적 20억원 이상: 10점") == "산식"
+    assert classify_criterion("보안 대책의 적정성을 평가") is None
+
+
+def test_compliance_and_eligibility(maker, profile):
+    m = maker()
+    m.p("1. 입찰참가자격")
+    m.p("○ 소프트웨어사업자(컴퓨터관련서비스사업)로 신고한 자")
+    m.p("○ 중소기업기본법에 따른 중소기업으로 직접생산확인을 받은 자")
+    m.p("2. 유의사항")
+    m.p("○ 제출서류를 기한 내 제출하지 않은 경우 입찰은 무효로 한다")
+    m.p("○ 허위 사실이 발견될 경우 협상대상자에서 제외")
+    m.p("○ 제안서 분량을 초과한 경우 초과 1쪽당 0.5점 감점")
+    m.p("○ 제안서에 업체명을 표기한 경우 평가 대상에서 제외한다(블라인드 평가)")
+    m.p("○ 제안서 본문은 50쪽 이내")
+    rfp, report = extract_rfp([m.doc], profile)
+    stated = [(c.kind, c.related_check) for c in rfp.compliance if c.origin == "stated"]
+    assert ("입찰무효", "SUB") in stated
+    assert ("평가제외", "FACT") in stated
+    assert ("감점", "PAGE") in stated
+    assert ("평가제외", "BLD") in stated
+    suggested = [c for c in rfp.compliance if c.origin == "suggested"]
+    assert len(suggested) == 5 and all(c.status == "proposed" for c in suggested)
+    assert [e.value for e in rfp.eligibility][:2] == ["소프트웨어사업자(컴퓨터관련서비스사업)로 신고한 자",
+                                                     "중소기업기본법에 따른 중소기업으로 직접생산확인을 받은 자"]
+    # 블라인드 위반이 '평가 제외'로 규정되면 작성지침 값에 그 근거가 메모된다(BLD 점검을 blocker로)
+    assert rfp.guideline.blind.value is True and "평가제외" in (rfp.guideline.blind.note or "")
+
+
+def test_blind_negation_and_omissions(maker):
+    m = maker()
+    m.p("○ 본 사업은 블라인드 평가를 실시하지 않음")
+    m.p("○ 제안서 글자 크기는 별도 기준에 따름")
+    m.p("○ 제안서 본문은 40쪽 이내")
+    report = ExtractionReport()
+    g = extract_guideline([m.doc], report)
+    assert g.blind.value is False and g.blind.confidence == 1.0
+    omissions = [f.message for f in report.findings if f.code == "GUIDE-OMISSION"]
+    assert any("글자 크기" in msg for msg in omissions)
+
+
+def test_prescribed_toc_production_tags(maker):
+    m = maker()
+    m.p("□ 제안서 목차")
+    m.table([
+        ["작성 항목", "세부 목차", "비 고"],
+        ["Ⅰ. 제안개요", "1. 제안배경", "자유서식"],
+        ["Ⅱ. 제안업체 일반", "1. 일반현황", "별지 제2호, 별지 제3호"],
+        ["Ⅲ. 요구사항 대비표", "1. 수용여부", "조견표 및 참조표"],
+    ])
+    toc = extract_guideline([m.doc], ExtractionReport()).prescribed_toc.value
+    assert [(c.title, c.production) for c in toc] == [("제안개요", "자유서식"), ("제안업체 일반", "별지서식"),
+                                                      ("요구사항 대비표", "대응표")]
+    assert toc[1].form_refs == ["별지 제2호", "별지 제3호"]

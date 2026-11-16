@@ -71,11 +71,14 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
         for r in rfp.requirements
     ], [16, 8, 14, 30, 40, 70, 24, 18, 10, 20, 12, 22])
 
-    _sheet(wb, "목차·쪽수", ["번호", "제목", "수준", "연결 평가항목", "배점", "쪽수 예산", "요구사항 수", "체크리스트", "출처"], [
+    targets = {line.node_id: line.target_chars for line in budget.lines}
+    _sheet(wb, "목차·쪽수", ["번호", "제목", "수준", "연결 평가항목", "배점", "쪽수 예산", "목표 글자 수", "요구사항 수",
+                           "체크리스트", "출처"], [
         [n.number, n.title, n.level, ", ".join(n.eval_items), round(n.points, 2), n.page_budget,
+         f"{targets[n.id][0]:,}~{targets[n.id][1]:,}" if targets.get(n.id) else "",
          len(n.requirements), "\n".join(n.checklist), n.origin]
         for n in outline.walk()
-    ], [10, 34, 6, 16, 8, 10, 10, 70, 14])
+    ], [10, 34, 6, 16, 8, 10, 16, 10, 70, 14])
 
     g = rfp.guideline
     guide_rows: list[list[object]] = []
@@ -94,6 +97,17 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
     for d in g.required_documents:
         guide_rows.append([d.form_no or "별지", d.name, "", _loc_text(d.locators)])
     _sheet(wb, "작성지침", ["항목", "값", "원문", "RFP 원문 위치"], guide_rows, [20, 30, 60, 22])
+
+    _sheet(wb, "무효·감점 사유", ["구분", "내용", "관련 점검", "출처", "상태", "RFP 원문 위치"], [
+        [c.kind, c.text, c.related_check or "", "원문 명시" if c.origin == "stated" else "권고(원문 없음)",
+         c.status, _loc_text(c.locators)] for c in rfp.compliance
+    ] + [["참가자격", e.value, "", "원문 명시", e.status, _loc_text(e.locators)] for e in rfp.eligibility],
+        [10, 80, 10, 14, 10, 22])
+
+    items = {it.id: it.name for it in rfp.evaluation.items()}
+    _sheet(wb, "평가규칙", ["종류", "내용", "적용 항목", "RFP 원문 위치"], [
+        [r.kind, r.text, items.get(r.item_id or "", ""), _loc_text(r.locators)] for r in rfp.evaluation.rules
+    ], [10, 80, 24, 22])
 
     _sheet(wb, "질의서 후보", ["대상", "쟁점", "질의(초안)", "RFP 원문 위치"], [
         [q.target, q.issue, q.question, _loc_text(q.locators)] for q in rfp.questions

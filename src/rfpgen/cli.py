@@ -8,6 +8,7 @@ from typing import Annotated
 
 import typer
 
+from .diff import diff_project
 from .parse import UnsafeInputError, collect_inputs, parse_document
 from .pipeline import analyze
 from .profile import load_profile
@@ -45,6 +46,8 @@ def analyze_cmd(
     typer.echo(f"  목차        : {result.outline.origin}, 장 {len(result.outline.chapters)}개")
     typer.echo(f"  쪽수 예산   : {result.budget.main_page_limit}쪽 ({result.budget.main_page_limit_source})")
     typer.echo(f"  추적표      : 커버리지 {result.trace.coverage():.0%}")
+    stated = sum(1 for c in rfp.compliance if c.origin == "stated")
+    typer.echo(f"  무효·감점   : 원문 {stated}건, 권고 {len(rfp.compliance) - stated}건 / 평가규칙 {len(ev.rules)}건")
     typer.echo(f"  질의서 후보 : {len(rfp.questions)}건")
     sev = Counter(f.severity for f in rep.findings)
     typer.echo(f"  점검        : 오류 {sev['error']}, 경고 {sev['warning']}, 정보 {sev['info']}")
@@ -54,6 +57,27 @@ def analyze_cmd(
     typer.echo("\n산출물:")
     for key in ("xlsx", "analysis_md", "questions_md", "rfp", "trace"):
         typer.echo(f"  {result.outputs[key]}")
+
+
+@app.command("diff")
+def diff_cmd(
+    project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)],
+    from_version: Annotated[int | None, typer.Option("--from", help="비교 기준 버전(기본: 직전)")] = None,
+    to_version: Annotated[int | None, typer.Option("--to", help="비교 대상 버전(기본: 최신)")] = None,
+) -> None:
+    """두 RFP 버전(사전규격·본공고·정정공고)을 항목 단위로 비교하고 영향받는 절과 재실행 단계를 보여 준다."""
+    try:
+        d, json_path, md_path = diff_project(project, from_version, to_version)
+    except ValueError as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.secho(f"v{d.from_version} → v{d.to_version}: 변경 {len(d.changes)}건, 확인 필요 {len(d.confirmations())}건", bold=True)
+    for c in d.confirmations()[:20]:
+        typer.secho(f"  ! [{c.target}] {c.key} {c.field or ''} {c.kind}: {(c.old or '')[:40]!r} → {(c.new or '')[:40]!r}",
+                    fg=typer.colors.YELLOW)
+    if d.rerun:
+        typer.echo("  다시 돌릴 단계: " + ", ".join(d.rerun))
+    typer.echo(f"\n산출물:\n  {md_path}\n  {json_path}")
 
 
 @app.command("parse")

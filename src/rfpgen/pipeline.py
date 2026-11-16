@@ -92,9 +92,10 @@ def analyze(paths: list[Path], project_dir: Path, profile: Profile | None = None
     out: dict[str, Path] = {}
     out["rfp"] = _write_json(project_dir / "rfp" / f"rfp.v{version}.json", rfp)
     out["extraction_report"] = _write_json(project_dir / "rfp" / f"extraction_report.v{version}.json", report)
-    out["outline"] = _write_json(project_dir / "plan" / "outline.json", outline)
-    out["budget"] = _write_json(project_dir / "plan" / "budget.json", budget)
-    out["trace"] = _write_json(project_dir / "plan" / "trace.json", trace)
+    for base in (project_dir / "plan" / f"v{version}", project_dir / "plan"):  # 버전별 보관 + 최신본
+        out["outline"] = _write_json(base / "outline.json", outline)
+        out["budget"] = _write_json(base / "budget.json", budget)
+        out["trace"] = _write_json(base / "trace.json", trace)
     out["xlsx"] = project_dir / "out" / "analysis.xlsx"
     write_workbook(out["xlsx"], rfp, outline, budget, trace, report)
     out["analysis_md"] = project_dir / "out" / "analysis.md"

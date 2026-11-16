@@ -80,3 +80,15 @@ def test_template_outline_without_evaluation(maker, profile):
     assert any(c.canonical == "상생협력하도급" for c in outline.chapters)
     assert budget.main_page_limit_source.startswith("프로필 기본값")
     assert trace.rows[0].status == "mapped"
+
+
+def test_chars_per_page_and_target_chars(rfp_doc, profile):
+    from rfpgen.plan.budget import chars_per_page
+
+    rfp, report = extract_rfp([rfp_doc], profile)
+    theoretical, effective = chars_per_page(profile, rfp)
+    assert theoretical == 37 * 32  # 본문 폭 170mm ÷ 13pt, 높이 242mm ÷ (13pt × 160%)
+    assert effective == int(theoretical * 0.6)
+    _, budget, _ = plan_proposal(rfp, profile, report)
+    line = next(ln for ln in budget.lines if ln.title == "기능 요구사항")
+    assert line.target_chars == [int(line.pages * effective * 0.8), int(line.pages * effective * 1.2)]

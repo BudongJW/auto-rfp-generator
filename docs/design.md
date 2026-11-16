@@ -156,7 +156,7 @@
 | P5 | 사람이 최종 책임을 진다 | 다섯 게이트를 두고, 생성기는 자동 제출하지 않는다 |
 | P6 | 가드레일은 프롬프트가 아니라 후처리에 둔다 | 금지 표현 목록을 프롬프트에 나열하지 않고 생성 후 필터로 잡는다(Yu et al. 2026) |
 | P7 | 데이터는 밖으로 나가지 않는 것이 기본값 | 데이터 분류별로 LLM 경로를 제한하고, 로컬 전용 모드를 지원한다 |
-| P8 | 라이선스를 격리한다 | GPL·AGPL 도구는 별도 프로세스로만 쓰거나 아이디어만 참고한다. 한컴 번들 글꼴은 배포하지 않는다 |
+| P8 | 라이선스를 추적한다 | GPL·AGPL 코드는 분석해 이식·튜닝하되 출처·커밋·원 라이선스를 기록하고 별도 하위 패키지로 모은다(11.2절). 라이선스 미명시 코드는 복사하지 않는다. 한컴 번들 글꼴은 배포하지 않는다 |
 
 ---
 
@@ -1013,7 +1013,7 @@ auto-rfp-generator/
 | **M1 RFP 분석기** | 업로드 → parse(HWPX·HWP·PDF·DOCX) → extract → plan. 산출물은 `rfp.json`, 추적표 XLSX, 목차, 쪽수 예산, 질의서 초안. CLI 제공. **진행: 규칙 기반 1차 구현 완료(2026-11-17).** 남은 것: LLM 보조 추출, 라벨 30건 벤치마크, 비용 측정 | 라벨 30건에서 ID 재현율 ≥ 99%, 평가표 완전 일치 ≥ 95%, 비용 측정 결과 문서화 |
 | **M2 본문 초안 + HWPX** | KB(YAML/CSV 입력), strategy(스토리보드·자료 요청), generate, HWPX render, check(COV·PAGE·BLD·FACT 규칙) | 샘플 RFP 3건 end-to-end, blocker 0건, 한글에서 열람 확인 |
 | **M3 장표·파생·제출 패키지** | PPTX 템플릿·슬롯, 요약본·발표자료·대본, 별지 채우기, 도식 렌더, PDF 파이프라인, package | 문서구분별 제출 세트 생성, 용량·메타데이터 점검 통과 |
-| **M4 연동·협업** | 나라장터 OpenAPI 감시(사전규격), 정정공고 diff, Web UI 검토 흐름, LLM 리뷰어, PostgreSQL, 지자체 프로필 | 사전규격→본공고 갱신 시나리오 통과, 다중 사용자 게이트 운영 |
+| **M4 연동·협업** | 나라장터 OpenAPI 감시(사전규격), 정정공고 자동 감시·재실행(diff 엔진은 M1에 구현), Web UI 검토 흐름, LLM 리뷰어, PostgreSQL, 지자체 프로필 | 사전규격→본공고 갱신 시나리오 통과, 다중 사용자 게이트 운영 |
 | **M5 보안 배포·확장** | on-prem 패키지, 로컬 LLM 품질 리포트, 경쟁적 대화·2단계·카탈로그 프로필, 벤치마크 공개 | 망분리 환경 설치 문서, 공개 벤치마크 v1 |
 
 M1만으로도 단독 가치가 있다. 시장의 체크리스트·대응표 도구(프리세일즈 CheckAI 등)와 같은 층이므로, 생성 기능 없이도 파일럿을 시작할 수 있다.
@@ -1072,7 +1072,15 @@ M1만으로도 단독 가치가 있다. 시장의 체크리스트·대응표 도
   - **'계량/비계량'은 '정량/정성'과 같은 뜻으로 처리한다.**
   - **지정 목차 표의 별지 번호로 제출 서식 목록을 만든다.**
   - **작성지침 문장은 제안·작성·분량 문맥에서만 읽는다.** 요구사항 정의서 표 안의 문장(예: "pdf 업로드 기능", "A3 용지 인쇄")은 제외한다.
-- **외부 코드 분석:** `docs/analysis/hwpx-rendering-tools.md`(hwpx-docs, H2Orestart), `docs/analysis/chinese-bid-generators.md`(중국 标书 생성기). 배포용·암호 HWP 복호화는 법률 검토 전까지 비활성이며, 그런 문서는 한글에서 PDF로 저장해 올리도록 안내한다.
+- **외부 코드 분석과 M1 이식:** `docs/analysis/hwpx-rendering-tools.md`(hwpx-docs, H2Orestart), `docs/analysis/chinese-bid-generators.md`(중국 标书 생성기 4종, 고정 커밋·LICENSE 확인). 분석 문서 5장의 결정적 제안을 M1에 재구현했다.
+  - **평가항목/평가규칙 분리**(OpenBidKit): 등급 정의·감점·가점·산식은 `EvaluationTable.rules`로, 제안서가 답할 질문만 `EvalItem.criteria`로 둔다.
+  - **입찰무효·평가제외·감점 사유**(OpenBidKit 无效投标/废标项): 원문 명시(`stated`)와 프로필 권고(`suggested`, G1 채택 대상)를 나누고, 관련 점검 규칙(PAGE·FMT·BLD·SUB·FACT·LANG)을 붙인다. 위반이 '제외·무효'로 규정되면 작성지침 값에 근거를 메모한다. 입찰참가자격 줄도 모은다.
+  - **작성지침 극성·누락 점검**(OpenBidKit valueIssue·findOmissions): "블라인드 평가를 실시하지 않음" 같은 부정을 먼저 판정하고, 주제 문구는 있는데 값이 빈 경우 `GUIDE-OMISSION`으로 보고한다.
+  - **지정 목차 작성 방식 태그**(OpenBidKit content_mode): 자유서식·별지서식·대응표·증빙첨부와 별지 번호.
+  - **쪽당 글자 수**(OpenBidKit pageMetrics): 본문 폭·높이·글자 크기·줄간격으로 이론 상한(기본 1,184자)과 실효값을 구해 절별 목표 글자 수를 낸다.
+  - **RFP diff 엔진**(BidPilot-AI): 분석 문서 권고에 따라 M4에서 M1로 앞당겼다. 항목 단위 비교, 영향 절, 재실행 단계, 고위험 변경 확인 목록을 낸다. 계획 산출물은 `plan/v{n}/`에 버전별로 보관한다.
+  - 이식하지 않은 것: OpenBidKit의 기본 사실 모드 `fabricate`(자료가 없으면 값을 지어냄), BiaoShu의 근거 없는 고정 수치 문구, BidMaster의 가격 안전구간 규칙, BidPilot의 3.6만 자 이후 입력 절단.
+  - LLM 프롬프트(분석 문서 6장 한국어 초안)는 LLM 계층을 붙일 때 이식한다. 배포용·암호 HWP 복호화는 법률 검토 전까지 비활성이며, 그런 문서는 한글에서 PDF로 저장해 올리도록 안내한다.
 
 ---
 
@@ -1125,8 +1133,8 @@ M1만으로도 단독 가치가 있다. 시장의 체크리스트·대응표 도
 | 회사 PPTX 템플릿 온보딩 | kyuhyoung/dsi | 슬롯 모델 + 사람 확인 |
 | 서식 품질 게이트 | KAIST Proposal_Writer, Canine89/hwpxskill | polaris_dvc 검증 + 렌더 쪽수 측정 |
 | 섹션 간 SSOT | DinN0000/bid-marketplace(BidKit) | 프로젝트 fact로 통합 |
-| 실격사유 점검 | OpenBidKit_Yibiao, BidMaster-Pro(AGPL, 아이디어만) | 한국 작성지침 기반 규칙 카탈로그 |
-| 정정공고 재생성 | GovDash, BidPilot-AI | DAG 캐시 기반 영향 분석 |
+| 실격사유 점검 | OpenBidKit_Yibiao, BidMaster-Pro(AGPL-3.0, 분석 후 재구현) | M1: 입찰무효·평가제외·감점 사유 추출(원문 명시/권고 분리), 평가항목·평가규칙 분리, 작성지침 극성·누락 점검, 지정 목차 작성 방식 태그, 쪽당 글자 수. M2: 한국 작성지침 기반 규칙 카탈로그 |
+| 정정공고 재생성 | GovDash, BidPilot-AI(AGPL-3.0, 분석 후 재구현) | M1: 항목 단위 RFP diff, 재실행 단계 미리보기, 고위험 변경 확인 목록(`rfpgen diff`). M4: 자동 감시와 DAG 재실행 |
 | 근거자료 공백이 품질 병목 | Yu, Mathew & Wang(2026) | 생성 전 자료 요청서 |
 | 산문 지시, 후처리 가드레일 | Yu, Mathew & Wang(2026) | 프롬프트 작성 규칙(8.4절) |
 | 입찰공고·사전규격 수집 | narajangteo-bid-mcp, mcp-kr-g2b | 생성기 입력 어댑터로만 사용 |

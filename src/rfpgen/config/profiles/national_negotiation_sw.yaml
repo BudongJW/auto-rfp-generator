@@ -136,3 +136,27 @@ ambiguity:
       scope: [고도화, 개선, 확대, 강화]
     status: user
     ref: "모호 표현 사전(제안값) — 질의서 후보 생성용"
+
+compliance:
+  # 원문에 없어도 확인을 권하는 사유(origin=suggested). G1에서 사람이 채택해야 점검 규칙의 근거가 된다.
+  # OpenBidKit_Yibiao의 '원문 명시 vs 경험상 권고' 분리를 한국 조달 관행으로 바꿨다(최대 5개).
+  suggested:
+    value:
+      - {kind: 입찰무효, related_check: SUB, text: "가격입찰서와 제안서 중 하나라도 제출하지 않으면 입찰이 무효가 된다"}
+      - {kind: 제출유의, related_check: SUB, text: "나라장터 임시저장 시 파일이 암호화되고, 최종 제출 후에는 수정·재제출할 수 없다"}
+      - {kind: 평가제외, related_check: FACT, text: "제안 내용이 허위로 확인되면 협상대상에서 제외되거나 계약 후에도 해지될 수 있다"}
+      - {kind: 감점, related_check: LANG, text: "타사를 비방하거나 근거 없이 비교하는 표현은 불이익 대상이다"}
+      - {kind: 감점, related_check: null, text: "입찰자가 평가위원에게 사전접촉하면 감점된다(보도 기준 5점)"}
+    status: provisional
+    ref: "NIA·서울지방조달청 공고 문구, 조달청 세부기준 2024-09 개정 보도, 보안뉴스(사전접촉 5점) — 원문 미대조"
+
+page_metrics:
+  # 쪽당 글자 수 계산(OpenBidKit pageMetrics 방식): 본문 폭·높이와 글자 크기·줄간격으로 이론 상한을 구한다
+  body_width_mm: {value: 170, status: user, ref: "A4 210mm - 좌우 여백 20mm (설계서 10.2절)"}
+  body_height_mm: {value: 242, status: user, ref: "A4 297mm - 위 20 - 아래 15 - 머리말·꼬리말 10mm"}
+  font_pt: {value: 13, status: user, ref: "본문 13pt(설계서 10.2절). RFP 최소 글자 크기가 더 크면 그 값을 쓴다"}
+  line_spacing_pct: {value: 160, status: user, ref: "정부 보고서 관행"}
+  effective_ratio:
+    value: 0.6
+    status: user
+    ref: "개조식·표·그림 비중을 반영한 실효 비율(제안값) — M2 렌더 실측으로 보정"

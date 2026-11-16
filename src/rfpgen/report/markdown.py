@@ -52,6 +52,9 @@ def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: 
     if g.presentation:
         p = g.presentation.value
         add(f"- 발표: {p.minutes or '?'}분, 질의응답 {p.qa_minutes or '?'}분, PM 직접 발표 {'예' if p.pm_must_present else '미기재'}")
+    if g.prescribed_toc:
+        prod = ", ".join(f"{c.number}.{c.title}({c.production})" for c in g.prescribed_toc.value)
+        add(f"- 지정 목차: {prod}")
     if g.required_documents:
         add(f"- 별지 서식 {len(g.required_documents)}종: " + ", ".join(f"{d.form_no}({d.name[:20]})" for d in g.required_documents[:12]))
     add("")
@@ -67,6 +70,32 @@ def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: 
     else:
         add("평가표를 찾지 못했습니다.")
         add("")
+    if ev.rules:
+        kinds: dict[str, int] = {}
+        for r in ev.rules:
+            kinds[r.kind] = kinds.get(r.kind, 0) + 1
+        add(f"평가규칙(점수 매기는 방법, 본문이 답할 대상 아님) {len(ev.rules)}건: "
+            + ", ".join(f"{k} {v}" for k, v in kinds.items()) + " — `analysis.xlsx`의 평가규칙 시트")
+        add("")
+    add("## 입찰무효·평가제외·감점 사유")
+    add("")
+    stated = [c for c in rfp.compliance if c.origin == "stated"]
+    suggested = [c for c in rfp.compliance if c.origin == "suggested"]
+    for c in stated[:30]:
+        where = f" ({c.locators[0].doc_id} p.{c.locators[0].page})" if c.locators and c.locators[0].page else ""
+        add(f"- **{c.kind}**{f' [{c.related_check}]' if c.related_check else ''} {c.text[:160]}{where}")
+    if len(stated) > 30:
+        add(f"- … 외 {len(stated) - 30}건(`analysis.xlsx`)")
+    if suggested:
+        add("")
+        add("원문에는 없지만 확인을 권하는 사유(G1에서 채택 여부 결정):")
+        add("")
+        for c in suggested:
+            add(f"- {c.kind}: {c.text}")
+    if rfp.eligibility:
+        add("")
+        add(f"입찰참가자격 {len(rfp.eligibility)}줄 — `analysis.xlsx`의 무효·감점 사유 시트")
+    add("")
     add("## 요구사항")
     add("")
     by_prefix: dict[str, int] = {}
@@ -83,6 +112,9 @@ def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: 
     add(f"## 목차와 쪽수 예산 (출처: {outline.origin})")
     add("")
     add(f"본문 상한 {budget.main_page_limit}쪽({budget.main_page_limit_source}) = 고정 {budget.fixed_pages}쪽 + 배점 배분 {budget.distributable_pages}쪽 (정성 {budget.qualitative_points:g}점)")
+    add("")
+    add(f"쪽당 글자 수: 이론 상한 {budget.chars_per_page:,}자, 실효 {budget.effective_chars_per_page:,}자(개조식·표 비중 반영 제안값). "
+        "절별 목표 글자 수는 `analysis.xlsx` 목차·쪽수 시트")
     add("")
     add("| 번호 | 제목 | 배점 | 쪽수 | 요구사항 |")
     add("|---|---|---|---|---|")
