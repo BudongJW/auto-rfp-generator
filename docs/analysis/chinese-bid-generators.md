@@ -671,12 +671,15 @@
 
 - 법적 의무는 없다. 설계서 부록 C(참고 구현 대응표)에 출처를 남기는 기존 관행을 따른다.
 
-#### 설계서 갱신 필요(이 작업에서는 수정하지 않음)
+#### 설계서와 맞출 것(이 작업에서는 수정하지 않음)
 
-- 11.1절 표의 "참고만(코드 미사용) | OpenBidKit_Yibiao, BidMaster-Pro …" 행
-- 11.2절 "AGPL 코드는 가져오지 않는다"
-- 부록 C "OpenBidKit_Yibiao, BidMaster-Pro(AGPL, 아이디어만)"
-- 소유자 결정에 맞춰 ADR(`docs/adr/`)을 쓰고 위 세 곳을 고친다. 그리고 M4 Web UI 요구사항에 "AGPL §13 소스 제공 링크"를 넣는다.
+이 분석을 쓰는 동안 설계서 작업 트리(미커밋 v0.2)의 11.1·11.2절과 16장 Q8에 이식 결정이 반영됐다. 아직 남은 것은 다음과 같다.
+
+- 4장 원칙 P8: "GPL·AGPL 도구는 별도 프로세스로만 쓰거나 아이디어만 참고한다"
+- 부록 C "실격사유 점검" 행: "OpenBidKit_Yibiao, BidMaster-Pro(AGPL, 아이디어만)"
+- 14장 M4 Web UI 요구사항: "AGPL §13 소스 제공 링크"가 아직 없다.
+- 이식 디렉터리 분리와 SPDX 표기 규칙(위 운영 제안): ADR(`docs/adr/`)로 남기는 것이 좋다.
+- 14장 로드맵: 정정공고 diff 엔진을 M1로 당기자는 5.8절 제안을 반영할지 정해야 한다.
 
 ### 4.4 이식하지 않는 것
 
@@ -696,6 +699,12 @@
 ---
 
 ## 5. M1에 지금 바로 쓸 것: extract·plan 구체 제안
+
+> 이 분석과 동시에 규칙 기반 M1 구현이 들어왔다(커밋 `6b61f02`).
+> - extract: `src/rfpgen/extract/{evaluation,guideline,requirements,ambiguity,notice}.py`
+> - plan: `src/rfpgen/plan/{outline,budget,trace}.py`
+>
+> 아직 `llm` 모듈은 없다. 아래 제안은 두 갈래로 적용한다. 결정적 부분(근거 원문 대조, 극성 검사, 누락 탐지, 위치 검증, 커버리지 계산)은 기존 파일에 바로 붙인다. LLM 보조 부분(5.1절, 6장 프롬프트)은 `llm` 모듈과 함께 추가한다.
 
 ### 5.1 공통 LLM 호출 틀(extract)
 
