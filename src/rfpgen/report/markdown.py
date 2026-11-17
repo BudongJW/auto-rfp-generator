@@ -124,6 +124,17 @@ def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: 
     add("")
     add(f"추적표 커버리지: {trace.coverage():.0%} ({sum(1 for r in trace.rows if r.status != 'unmapped')}/{len(trace.rows)})")
     add("")
+    if report.stats.get("llm_calls"):
+        st = report.stats
+        llm_reqs = sum(1 for r in rfp.requirements if r.origin == "llm")
+        add("## LLM 보조 추출")
+        add("")
+        add(f"- 호출 {st['llm_calls']}회: 입력 {st.get('llm_input_tokens', 0):,}, 캐시 읽기 {st.get('llm_cache_read_tokens', 0):,}, "
+            f"캐시 쓰기 {st.get('llm_cache_write_tokens', 0):,}, 출력 {st.get('llm_output_tokens', 0):,} 토큰")
+        add(f"- LLM이 추가한 서술형 요구사항(X-) {llm_reqs}건, 무효·감점 사유 "
+            f"{sum(1 for c in rfp.compliance if c.method == 'llm')}건 — 모두 근거 인용 검증을 통과한 값이며 G1 확인 대상입니다")
+        add("- 호출별 기록: `audit/llm_calls.jsonl`")
+        add("")
     add("## 점검 결과")
     add("")
     if report.findings:

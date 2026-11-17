@@ -11,7 +11,8 @@ from pathlib import Path
 import yaml
 
 from . import __version__
-from .extract import extract_rfp
+from .extract import extract_rfp, order_documents, requirement_tables
+from .extract.compliance import link_compliance_severity
 from .parse import InputFile, UnsafeInputError, collect_inputs, detect_format, parse_document
 from .plan import plan_proposal
 from .profile import Profile, load_profile
@@ -67,7 +68,8 @@ def parse_inputs(files: list[InputFile], report: ExtractionReport) -> list[Docum
 
 
 def analyze(paths: list[Path], project_dir: Path, profile: Profile | None = None,
-            profile_name: str = "national_negotiation_sw") -> AnalysisResult:
+            profile_name: str = "national_negotiation_sw", llm_provider=None) -> AnalysisResult:
+    """llm_provider가 주어지면 결정적 추출 뒤 LLM 보조 추출을 돈다(설계서 7.3절 B)."""
     profile = profile or load_profile(profile_name)
     files, skipped = collect_inputs(paths)
     pre = ExtractionReport()
@@ -86,6 +88,14 @@ def analyze(paths: list[Path], project_dir: Path, profile: Profile | None = None
 
     rfp, report = extract_rfp(docs, profile)
     report.findings = pre.findings + report.findings
+    if llm_provider is not None:
+        from .extract.llm_assist import llm_assist
+        from .llm import LLMGateway
+
+        gateway = LLMGateway(llm_provider, audit_path=project_dir / "audit" / "llm_calls.jsonl")
+        ordered = order_documents(docs)
+        llm_assist(rfp, ordered, profile, report, gateway, skip_tables=requirement_tables(rfp, ordered))
+        link_compliance_severity(rfp)
     outline, budget, trace = plan_proposal(rfp, profile, report)
 
     version = _next_version(project_dir / "rfp")

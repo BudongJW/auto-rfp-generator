@@ -41,6 +41,23 @@ uv run rfpgen analyze 정정공고_제안요청서.hwpx -o projects/my-bid
 uv run rfpgen diff projects/my-bid
 ```
 
+### LLM 보조 추출(선택)
+
+결정적 규칙으로 못 채운 작성지침 값, 규칙에 걸리지 않은 무효·감점 사유와 참가자격, 요구사항 ID 없이 문장으로만 적힌 요구사항을 Claude API로 보강합니다. 근거 인용 검증을 통과한 값만 받고, 모두 `method=llm`·`status=proposed`로 들어가 사람이 확인합니다.
+
+```bash
+export ANTHROPIC_API_KEY=...
+```
+
+```bash
+uv run rfpgen analyze 제안요청서.hwpx -o projects/my-bid --llm
+```
+
+- 모델은 `--llm-model` 또는 환경변수 `RFPGEN_LLM_MODEL`로 지정합니다. 지정하지 않으면 Models API에서 가장 최근 Opus 계열 모델을 고릅니다.
+- 보내는 것은 공개 RFP의 키워드 주변 발췌뿐입니다(과제당 최대 8만 자). 회사 자료는 보내지 않습니다.
+- 호출마다 모델·토큰·캐시 적중·결과가 `audit/llm_calls.jsonl`에 남습니다.
+- 인증 정보가 없거나 호출이 실패해도 LLM 과제만 건너뛰고 나머지 분석 결과는 그대로 나옵니다.
+
 ```bash
 uv run rfpgen parse 제안요청서.pdf
 ```
@@ -61,11 +78,11 @@ uv run pytest
 
 ## 알려진 한계
 
-- **추출은 결정적 규칙만으로 합니다.** ID 없는 서술형 요구를 찾는 LLM 보조 패스는 M1 후속 작업입니다.
+- **LLM 보조 추출은 아직 실제 API로 품질·비용을 재지 않았습니다.** 가짜 공급자로 검증 규칙과 요청 형태만 테스트했습니다.
 - **스캔 PDF는 아직 읽지 못합니다.** 숫자가 도형으로 그려진 PDF도 마찬가지입니다. 대신 해당 문장을 찾아 "숫자를 읽지 못함"으로 보고합니다.
 - **배포용·암호 HWP는 열지 않습니다.** 한글에서 PDF로 저장해 올려 주세요.
 - **상세화 등급(S~D)은 휴리스틱 추정입니다.**
 
 ## 라이선스
 
-코드는 GPL-3.0입니다(`LICENSE`). GPL·AGPL 프로젝트에서 이식한 코드는 원 라이선스와 출처를 표시합니다. 웹 서비스로 배포할 때의 소스 제공 의무는 설계서 11.2절을 보세요.
+코드는 GPL-3.0입니다(`LICENSE`). `src/rfpgen/_third_party/agpl/` 아래 파일은 AGPL-3.0 저작물(OpenBidKit_Yibiao, BidMaster-Pro)을 번안한 것으로 AGPL-3.0-only 조건을 따르며, 원 라이선스와 저작자 고지는 [third_party/](third_party/)에 있습니다. 이 프로그램을 웹 서비스로 제공하면 이용자에게 전체 소스를 제공해야 합니다(설계서 11.2절).

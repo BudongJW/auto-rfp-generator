@@ -15,6 +15,20 @@ from .requirements import RequirementExtractor
 _ROLE_ORDER = {"제안요청서": 0, "평가기준": 1, "과업지시서": 2, "입찰공고": 3, "별지서식": 4, "기타": 5}
 
 
+def requirement_tables(rfp: Rfp, docs: list[Document]) -> set[str]:
+    """요구사항 정의서·총괄표의 표 ID(작성지침·LLM 발췌에서 제외할 표)."""
+    by_id = {d.doc_id: {b.id: b for b in d.blocks} for d in docs}
+    out: set[str] = set()
+    for r in rfp.requirements:
+        if r.origin not in ("detail_table", "summary_table"):
+            continue
+        for lc in r.locators:
+            b = by_id.get(lc.doc_id, {}).get(lc.block_id)
+            if b is not None and b.parent:
+                out.add(b.parent)
+    return out
+
+
 def extract_rfp(docs: list[Document], profile: Profile) -> tuple[Rfp, ExtractionReport]:
     ordered = sorted(docs, key=lambda d: (_ROLE_ORDER.get(d.role, 9), d.doc_id))
     report = ExtractionReport()
@@ -23,12 +37,7 @@ def extract_rfp(docs: list[Document], profile: Profile) -> tuple[Rfp, Extraction
     rfp.evaluation = extract_evaluation(ordered, report)
     extractor = RequirementExtractor(profile.value("requirements.id_regex"))
     rfp.requirements = extractor.extract(ordered, report)
-    by_id = {d.doc_id: d for d in ordered}
-    req_tables = {
-        by_id[lc.doc_id].block(lc.block_id).parent
-        for r in rfp.requirements for lc in r.locators
-        if lc.doc_id in by_id and lc.block_id
-    } - {None}
+    req_tables = requirement_tables(rfp, ordered)
     rfp.guideline = extract_guideline(ordered, report, skip_tables=req_tables)  # type: ignore[arg-type]
     rfp.compliance = extract_compliance(ordered, profile, report, skip_tables=req_tables)  # type: ignore[arg-type]
     rfp.eligibility = extract_eligibility(ordered, report)
@@ -43,4 +52,8 @@ def extract_rfp(docs: list[Document], profile: Profile) -> tuple[Rfp, Extraction
     return rfp, report
 
 
-__all__ = ["extract_rfp"]
+__all__ = ["extract_rfp", "order_documents", "requirement_tables"]
+
+
+def order_documents(docs: list[Document]) -> list[Document]:
+    return sorted(docs, key=lambda d: (_ROLE_ORDER.get(d.role, 9), d.doc_id))

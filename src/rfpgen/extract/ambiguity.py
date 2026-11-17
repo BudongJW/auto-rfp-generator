@@ -49,9 +49,13 @@ def find_vague(text: str, vocab: dict[str, list[str]]) -> list[tuple[str, str]]:
     return hits
 
 
-def annotate_requirements(rfp: Rfp, vocab: dict[str, list[str]], report: ExtractionReport) -> None:
+def annotate_requirements(rfp: Rfp, vocab: dict[str, list[str]], report: ExtractionReport,
+                          only: set[str] | None = None) -> None:
+    """only가 주어지면 그 ID의 요구사항만 등급을 매기고 질의서 후보를 만든다(LLM이 나중에 추가한 요구사항용)."""
     grades: dict[str, int] = {}
     for req in rfp.requirements:
+        if only is not None and req.id not in only:
+            continue
         req.detail_grade = grade(req)  # type: ignore[assignment]
         grades[req.detail_grade] = grades.get(req.detail_grade, 0) + 1
         text = " ".join([req.definition, *req.details])
@@ -70,7 +74,8 @@ def annotate_requirements(rfp: Rfp, vocab: dict[str, list[str]], report: Extract
                 locators=req.locators[:1],
             ))
     for g, n in sorted(grades.items()):
-        report.stats[f"grade_{g}"] = n
+        key = f"grade_{g}"
+        report.stats[key] = (int(report.stats.get(key, 0)) if only is not None else 0) + n
 
 
 def questions_from_findings(rfp: Rfp, report: ExtractionReport) -> None:

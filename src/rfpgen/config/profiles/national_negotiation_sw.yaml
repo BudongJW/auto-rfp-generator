@@ -160,3 +160,18 @@ page_metrics:
     value: 0.6
     status: user
     ref: "개조식·표·그림 비중을 반영한 실효 비율(제안값) — M2 렌더 실측으로 보정"
+
+llm:
+  # LLM 보조 추출(설계서 7.3절 B). 모델 ID는 저장소에 두지 않는다: --llm-model 또는 RFPGEN_LLM_MODEL,
+  # 없으면 Models API에서 가장 최근 Opus 계열을 고른다. effort·runs는 벤치마크로 조정한다(설계서 13장).
+  tasks:
+    value:
+      guideline: {effort: medium, max_tokens: 16000, runs: 1}
+      compliance: {effort: high, max_tokens: 32000, runs: 2}
+      text_requirements: {effort: high, max_tokens: 32000, runs: 2}
+    status: user
+    ref: "설계서 8.4절 시작값. runs=2는 같은 입력을 두 번 돌려 결과가 흔들리는 항목을 표시한다(Yu et al. 2026)"
+  excerpt_max_chars:
+    value: 80000
+    status: user
+    ref: "과제당 RFP 발췌 상한(문자 수). 공개 RFP 404쪽(본문 37만 자)에서 과제별 발췌는 5.8만~6.5만 자였다"

@@ -65,11 +65,11 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
     ], [20, 8, 10, 26, 10, 70, 22])
 
     _sheet(wb, "요구사항", ["ID", "접두어", "분류", "명칭", "정의", "세부내용", "산출정보", "관련 요구사항",
-                          "상세화 등급(추정)", "모호 표현", "추출 원천", "RFP 원문 위치"], [
+                          "상세화 등급(추정)", "모호 표현", "추출 원천", "신뢰도", "RFP 원문 위치"], [
         [r.id, r.prefix, r.category, r.name, r.definition, "\n".join(r.details), "\n".join(r.outputs),
-         ", ".join(r.related), r.detail_grade, ", ".join(r.ambiguities), r.origin, _loc_text(r.locators)]
+         ", ".join(r.related), r.detail_grade, ", ".join(r.ambiguities), r.origin, r.confidence, _loc_text(r.locators)]
         for r in rfp.requirements
-    ], [16, 8, 14, 30, 40, 70, 24, 18, 10, 20, 12, 22])
+    ], [16, 8, 14, 30, 40, 70, 24, 18, 10, 20, 12, 8, 22])
 
     targets = {line.node_id: line.target_chars for line in budget.lines}
     _sheet(wb, "목차·쪽수", ["번호", "제목", "수준", "연결 평가항목", "배점", "쪽수 예산", "목표 글자 수", "요구사항 수",
@@ -92,17 +92,19 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
         value = "" if ex is None else (ex.value.model_dump() if hasattr(ex.value, "model_dump") else ex.value)
         guide_rows.append([label, str(value) if ex is not None else "(찾지 못함)",
                            ex.locators[0].quote if ex is not None and ex.locators else "",
-                           _loc_text(ex.locators) if ex is not None else ""])
-    guide_rows.append(["본문 쪽수 예산 기준", f"{budget.main_page_limit}쪽", budget.main_page_limit_source, ""])
+                           _loc_text(ex.locators) if ex is not None else "",
+                           ex.method if ex is not None else ""])
+    guide_rows.append(["본문 쪽수 예산 기준", f"{budget.main_page_limit}쪽", budget.main_page_limit_source, "", ""])
     for d in g.required_documents:
-        guide_rows.append([d.form_no or "별지", d.name, "", _loc_text(d.locators)])
-    _sheet(wb, "작성지침", ["항목", "값", "원문", "RFP 원문 위치"], guide_rows, [20, 30, 60, 22])
+        guide_rows.append([d.form_no or "별지", d.name, "", _loc_text(d.locators), "rule"])
+    _sheet(wb, "작성지침", ["항목", "값", "원문", "RFP 원문 위치", "추출 방법"], guide_rows, [20, 30, 60, 22, 10])
 
-    _sheet(wb, "무효·감점 사유", ["구분", "내용", "관련 점검", "출처", "상태", "RFP 원문 위치"], [
+    _sheet(wb, "무효·감점 사유", ["구분", "내용", "관련 점검", "출처", "추출 방법", "신뢰도", "상태", "RFP 원문 위치"], [
         [c.kind, c.text, c.related_check or "", "원문 명시" if c.origin == "stated" else "권고(원문 없음)",
-         c.status, _loc_text(c.locators)] for c in rfp.compliance
-    ] + [["참가자격", e.value, "", "원문 명시", e.status, _loc_text(e.locators)] for e in rfp.eligibility],
-        [10, 80, 10, 14, 10, 22])
+         c.method, c.confidence, c.status, _loc_text(c.locators)] for c in rfp.compliance
+    ] + [["참가자격", e.value, "", "원문 명시", e.method, e.confidence, e.status, _loc_text(e.locators)]
+         for e in rfp.eligibility],
+        [10, 80, 10, 14, 10, 8, 10, 22])
 
     items = {it.id: it.name for it in rfp.evaluation.items()}
     _sheet(wb, "평가규칙", ["종류", "내용", "적용 항목", "RFP 원문 위치"], [

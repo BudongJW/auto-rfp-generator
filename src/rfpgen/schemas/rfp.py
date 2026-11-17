@@ -75,6 +75,7 @@ class EvaluationTable(BaseModel):
 
 class Requirement(BaseModel):
     id: str
+    confidence: float = 1.0
     prefix: str | None = None
     category: str = ""
     name: str = ""
@@ -145,6 +146,8 @@ class ComplianceItem(BaseModel):
     text: str
     related_check: str | None = None
     origin: Literal["stated", "suggested"] = "stated"
+    method: Literal["rule", "llm", "profile", "human"] = "rule"
+    confidence: float = 1.0
     status: Status = "proposed"
     note: str | None = None
     locators: list[Locator] = Field(default_factory=list)
