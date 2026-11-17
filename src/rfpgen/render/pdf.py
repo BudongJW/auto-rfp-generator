@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import shutil
@@ -29,12 +30,32 @@ def sidecar_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "sidecars" / "node"
 
 
+@functools.lru_cache(maxsize=8)
+def playwright_version(sc: str) -> str | None:
+    """사이드카에서 쓸 수 있는 Playwright 버전(사이드카 node_modules 또는 전역). 없으면 None."""
+    if not shutil.which("node"):
+        return None
+    local = Path(sc) / "node_modules" / "playwright" / "package.json"
+    if local.exists():
+        return json.loads(local.read_text(encoding="utf-8")).get("version")
+    try:
+        proc = subprocess.run(["node", "-e", "console.log(require('playwright/package.json').version)"],
+                              cwd=sc if Path(sc).is_dir() else None, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
 def converters_available() -> dict[str, bool]:
     sc = sidecar_dir()
+    node = bool(shutil.which("node"))
+    pw = node and playwright_version(str(sc)) is not None
     return {
-        "hwpx": bool(shutil.which("node")) and (sc / "node_modules" / "@rhwp" / "core" / "rhwp.js").exists(),
+        "hwpx": pw and (sc / "node_modules" / "@rhwp" / "core" / "rhwp.js").exists() and (sc / "hwpx_to_pdf.mjs").exists(),
         "pptx": bool(shutil.which("soffice")),
-        "svg": bool(shutil.which("node")) and (sc / "svg_to_png.mjs").exists(),
+        "svg": pw and (sc / "svg_to_png.mjs").exists(),
     }
 
 
@@ -45,7 +66,8 @@ def svgs_to_png(pairs: list[tuple[Path, Path]], *, dpi: int = 200, font_aliases:
         return []
     sc = sidecar_dir()
     if not converters_available()["svg"]:
-        raise RenderError(f"SVG→PNG 변환기가 없습니다 — Node(18 이상)와 Playwright가 필요합니다({sc})")
+        raise RenderError(f"SVG→PNG 변환기가 없습니다 — `cd {sc} && npm install && npx playwright install chromium`"
+                          "(Node 18 이상 필요, 점검: rfpgen doctor)")
     cmd = ["node", str(sc / "svg_to_png.mjs"), "--dpi", str(dpi)]
     for alias in font_aliases or []:
         cmd += ["--font-alias", alias]
@@ -65,7 +87,8 @@ def hwpx_to_pdf(src: Path, dst: Path, *, font_aliases: list[str] | None = None, 
     sc = sidecar_dir()
     script = sc / "hwpx_to_pdf.mjs"
     if not converters_available()["hwpx"]:
-        raise RenderError(f"HWPX→PDF 변환기가 없습니다 — `cd {sc} && npm install`(Node 18 이상 필요)")
+        raise RenderError(f"HWPX→PDF 변환기가 없습니다 — `cd {sc} && npm install && npx playwright install chromium`"
+                          "(Node 18 이상 필요, 점검: rfpgen doctor)")
     dst.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["node", str(script), str(src), str(dst)]
     for alias in font_aliases or []:

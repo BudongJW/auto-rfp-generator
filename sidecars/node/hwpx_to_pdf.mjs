@@ -62,7 +62,9 @@ try {
 } catch {
   playwright = require(join(process.env.NODE_PATH || '', 'playwright'));
 }
-const browser = await playwright.chromium.launch();
+// 브라우저: Playwright가 받은 Chromium. 다른 Chrome을 쓰려면 RFPGEN_CHROMIUM_PATH에 실행 파일 경로를 준다.
+const executablePath = process.env.RFPGEN_CHROMIUM_PATH || undefined;
+const browser = await playwright.chromium.launch(executablePath ? { executablePath } : {});
 try {
   const page = await browser.newPage();
   const body = svgs

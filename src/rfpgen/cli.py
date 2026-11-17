@@ -307,6 +307,27 @@ def parse_cmd(
                 typer.echo(f"  {'  ' * ((b.level or 1) - 1)}{b.text[:70]}" + (f"  (p.{b.page})" if b.page else ""))
 
 
+@app.command("doctor")
+def doctor_cmd(
+    full: Annotated[bool, typer.Option("--full", help="한글 글자가 든 SVG·HWPX를 실제로 변환해 본다(수 초)")] = False,
+) -> None:
+    """설치 점검: 기능별로 필요한 도구(Python 패키지, Node 사이드카, Playwright, LibreOffice, 한글 글꼴)를 확인한다."""
+    from .doctor import run_doctor
+
+    checks = run_doctor(full=full)
+    mark = {"ok": ("✓", typer.colors.GREEN), "warn": ("!", typer.colors.YELLOW), "fail": ("✗", typer.colors.RED)}
+    for c in checks:
+        sym, color = mark[c.status]
+        typer.secho(f"  {sym} {c.name:28s} {c.detail[:60]:60s} [{c.needed_for}]", fg=color)
+        if c.hint:
+            typer.echo(f"      → {c.hint}")
+    fails = [c for c in checks if c.status == "fail"]
+    warns = [c for c in checks if c.status == "warn"]
+    typer.echo(f"\n결과: 실패 {len(fails)}, 경고 {len(warns)} — 경고 항목의 기능만 쓸 수 없고 나머지는 동작합니다")
+    if fails:
+        raise typer.Exit(code=1)
+
+
 @app.command("profile")
 def profile_cmd(
     profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,

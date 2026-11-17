@@ -63,9 +63,9 @@ outline:
 
 requirements:
   id_regex:
-    value: '[A-Z]{3}-(?:[A-Z]{2,4}-)?\d{3,4}'
+    value: '[A-Z]{3}-(?:[A-Z0-9]{2,4}-)?\d{3,4}'
     status: user
-    ref: "SFR-001, SFR-CA-001 형식(조사 보고서 4장). 4자리 일련번호도 허용"
+    ref: "SFR-001, SFR-CA-001, ECR-01-001(가운데 마디가 숫자 — 공개 RFP 실물) 형식(조사 보고서 4장). 4자리 일련번호도 허용"
   prefix_chapter_map:
     value:
       ECR: 기술및기능

@@ -72,6 +72,8 @@ def test_id_normalization_and_false_positives(profile):
     ex = RequirementExtractor(profile.value("requirements.id_regex"))
     assert ex.find_ids("SFR – 001, SER－002, SFR-CA-0003") == ["SFR-001", "SER-002", "SFR-CA-0003"]
     assert ex.find_ids("XSFR-001A") == []
+    # 가운데 마디가 숫자인 ID(공개 RFP 실물의 ECR-01-001) — 전화번호·표준 번호는 ID가 아니다
+    assert ex.find_ids("ECR-01-001, ECR-02-004 / 010-1234-5678, ISO-27001, KS-12-34567") == ["ECR-01-001", "ECR-02-004"]
 
 
 # ---- 평가표 -----------------------------------------------------------------------

@@ -119,10 +119,10 @@ uv run rfpgen forms projects/my-bid --kb kb --date 2026-12-01
 - 서명·날인, 선택 칸(□), 모르는 이름표는 채우지 않고 확인할 것으로 남깁니다. 블라인드 평가 문서(지정 목차가 가리키는 서식)에는 회사 식별 정보를 넣지 않습니다.
 - 문서구분(정성·정량·하도급·기타)은 서식 제목으로 추정합니다. 바꾸려면 프로젝트 폴더에 `forms.yaml`(`doc_types: {"7": 정량제안서}`, `skip: ["3"]`)을 둡니다. `rfpgen package`가 문서구분별 PDF(`04_정량제안서.pdf` 등)로 묶습니다.
 
-PDF 변환에는 다음이 필요합니다(한 번만).
+PDF 변환과 도식 그림에는 다음이 필요합니다(한 번만). Playwright 버전은 `sidecars/node/package.json`에 고정돼 있습니다.
 
 ```bash
-cd sidecars/node && npm install
+cd sidecars/node && npm install && npx playwright install chromium
 ```
 
 ```bash
@@ -130,6 +130,12 @@ sudo apt-get install -y libreoffice-impress fonts-noto-cjk
 ```
 
 - HWPX → PDF는 Node(18 이상)와 Playwright Chromium, `@rhwp/core`(MIT)를 씁니다. PPTX → PDF는 LibreOffice를 씁니다.
+- 이미 설치된 Chrome을 쓰려면 `RFPGEN_CHROMIUM_PATH`에 실행 파일 경로를 줍니다.
+- 설치 상태는 한 번에 점검합니다. `--full`은 한글이 든 작은 문서를 실제로 변환해 글꼴까지 확인합니다.
+
+```bash
+uv run rfpgen doctor --full
+```
 - 서버 렌더는 한글 화면과 다를 수 있습니다. 최종본은 PDF를 쪽마다 열어 확인하세요.
 
 ```bash
