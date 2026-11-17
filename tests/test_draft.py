@@ -54,6 +54,7 @@ def test_token_substitution_and_placeholders(kb_dir):
     assert d.blocks[0].items[0] == "실적 금액 12.5억 원"
     assert d.unresolved_tokens == ["F-999"] and d.placeholders == ["[확인 필요: KB에 F-999 없음]"]
     assert numbers("응답 3초 이내, 동시 사용자 500명, 2단계") == ["3초", "500명"]
+    assert numbers("발주기관과 1:1 대응 체계, 노드 1대 장애") == ["1대"]          # 비율(1:1)은 수치가 아니다
 
 
 # ---- 오프라인(골격) ------------------------------------------------------------------------

@@ -161,9 +161,11 @@ def _echo_cost(project: Path, profile, since_line: int) -> None:
 
     est = estimate(project / "audit" / "llm_calls.jsonl", profile.value("llm.pricing_usd_per_mtok") or {},
                    since_line=since_line)
-    if est.calls:
-        extra = f", 단가 모름: {', '.join(est.unpriced)}" if est.unpriced else ""
+    if est.calls and est.by_model:
+        extra = f", 단가 없는 모델: {', '.join(est.unpriced)}" if est.unpriced else ""
         typer.echo(f"  추정 비용   : 약 ${est.usd:.2f} (프로필 단가 기준, 실제 청구는 Console 확인{extra})")
+    elif est.calls:
+        typer.echo("  추정 비용   : 단가 미설정 — 프로필 llm.pricing_usd_per_mtok에 모델별 단가를 넣으면 보여 줍니다")
 
 
 def _audit_before(project: Path) -> int:

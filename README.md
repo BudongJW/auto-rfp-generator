@@ -50,7 +50,8 @@ export RFP_ANTHROPIC_API_KEY=...
 ```
 
 - rfpgen 전용 키 `RFP_ANTHROPIC_API_KEY`가 있으면 그 키로 공식 API 주소에 보냅니다(다른 주소는 `RFPGEN_ANTHROPIC_BASE_URL`). Claude Code 같은 도구가 자기 용도로 둔 `ANTHROPIC_BASE_URL`을 물려받지 않기 위해서입니다. 없으면 `ANTHROPIC_API_KEY` 등 SDK 기본 인증을 씁니다.
-- 실행이 끝나면 감사 기록의 토큰과 프로필 단가(`llm.pricing_usd_per_mtok`)로 추정 비용을 보여 줍니다. 실제 청구액은 Console에서 확인하세요.
+- 실행이 끝나면 감사 기록의 토큰과 프로필 단가로 추정 비용을 보여 줍니다. 저장소에는 모델 ID·단가를 두지 않으므로, 조직 프로필 YAML에 `llm: {pricing_usd_per_mtok: {value: {<모델 ID>: {input: …, output: …, cache_read: …, cache_write: …}}, status: user}}`처럼 적고 `--profile`로 넘깁니다. 실제 청구액은 Console에서 확인하세요.
+- 공개 RFP(404쪽) 실측 결과는 [docs/analysis/llm-live-measurement.md](docs/analysis/llm-live-measurement.md)에 있습니다: LLM 보조 분석 약 7~10분·2~3달러, 절 초안 절당 1~2분·0.2~0.4달러(추정).
 
 ```bash
 uv run rfpgen analyze 제안요청서.hwpx -o projects/my-bid --llm
@@ -178,7 +179,7 @@ uv run pytest
 
 ## 알려진 한계
 
-- **LLM 보조 추출과 LLM 초안 생성은 아직 실제 API로 품질·비용을 재지 않았습니다.** 가짜 공급자로 검증 규칙과 요청 형태만 테스트했습니다.
+- **LLM 실측은 공개 RFP 1건뿐입니다**([기록](docs/analysis/llm-live-measurement.md)). 숫자를 지어내지 않고 근거 검증을 통과한 값만 받는 것은 확인했지만, 문장형 요구사항 후보(이 RFP에서 157건)는 표 요구사항과 겹치는 것이 있어 G1 검토가 필요합니다.
 - **쪽수:** `draft`의 쪽수는 글자 수 추정이고, `package`가 렌더한 PDF로 확정합니다. 서버 렌더(rhwp)는 한글과 쪽 나눔이 다를 수 있으니 HWPX를 한글에서도 열어 확인해 주세요.
 - **별지 서식 채우기는 합성 서식으로만 검증했습니다.** 실제 공고 HWP 서식에서 이름표·표 모양이 다르면 못 채운 칸이 `forms.md`에 남습니다. 한글에서 열어 칸 넘침을 확인하세요. PDF로만 받은 서식은 채우지 못합니다.
 - **도식은 템플릿과 RFP·KB에서 만든 초안입니다.** 단계 구간·산출물·인프라 구성은 일반 템플릿이므로 수행계획에 맞춰 고쳐야 합니다. 시스템 구성도에는 아직 연결선이 없습니다.

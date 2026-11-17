@@ -9,7 +9,7 @@ from ..schemas.kb import CompanyKB
 
 TOKEN = re.compile(r"\{\{\s*(fact|kb)\s*:\s*([A-Za-z0-9_\-]+(?:\.[A-Za-z_]+)?)\s*\}\}")
 PLACEHOLDER = re.compile(r"\[(?:확인\s*필요|작성\s*필요|검토\s*필요)[^\]]*\]")
-NUMBER = re.compile(r"(?<![A-Za-z가-힣\-])(\d[\d,]*(?:\.\d+)?)\s*(%|퍼센트|건|명|개|회|억|만|천|원|년|개월|일|시간|초|분|배|TPS|tps|ms|GB|TB|MB|대|식|종|점)")
+NUMBER = re.compile(r"(?<![A-Za-z가-힣\-:])(\d[\d,]*(?:\.\d+)?)\s*(%|퍼센트|건|명|개|회|억|만|천|원|년|개월|일|시간|초|분|배|TPS|tps|ms|GB|TB|MB|대|식|종|점)")
 
 
 def substitute(text: str, kb: CompanyKB, unresolved: list[str]) -> str:

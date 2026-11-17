@@ -427,18 +427,19 @@ def test_cost_estimate_from_audit(tmp_path):
     from rfpgen.llm.cost import audit_lines, estimate
     from rfpgen.profile import load_profile
 
-    pricing = load_profile().value("llm.pricing_usd_per_mtok")
+    assert load_profile().value("llm.pricing_usd_per_mtok") == {}     # 저장소에는 모델 ID·단가를 두지 않는다
+    pricing = {"model-a": {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0}}
     audit = tmp_path / "llm_calls.jsonl"
     rows = [
-        {"model": "claude-opus-5-5", "usage": {"input_tokens": 100_000, "output_tokens": 10_000,
-                                               "cache_read_input_tokens": 50_000, "cache_creation_input_tokens": 20_000}},
-        {"model": "claude-opus-5-5-preview", "usage": {"input_tokens": 1_000_000, "output_tokens": 0}},  # 접두어로 단가
-        {"model": "어떤-모델", "usage": {"input_tokens": 1}},
-        {"model": "claude-opus-5-5", "error": "실패", "usage": {}},
+        {"model": "model-a", "usage": {"input_tokens": 100_000, "output_tokens": 10_000,
+                                       "cache_read_input_tokens": 50_000, "cache_creation_input_tokens": 20_000}},
+        {"model": "model-a-preview", "usage": {"input_tokens": 1_000_000, "output_tokens": 0}},  # 접두어로 단가
+        {"model": "모르는-모델", "usage": {"input_tokens": 1}},
+        {"model": "model-a", "error": "실패", "usage": {}},
     ]
     audit.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
     est = estimate(audit, pricing)
     first = (100_000 * 4 + 10_000 * 20 + 50_000 * 0.2 + 20_000 * 5) / 1_000_000
-    assert est.calls == 3 and est.unpriced == ["어떤-모델"]
+    assert est.calls == 3 and est.unpriced == ["모르는-모델"]
     assert abs(est.usd - (first + 4.0)) < 1e-9
     assert estimate(audit, pricing, since_line=1).usd == 4.0 and audit_lines(audit) == 4
