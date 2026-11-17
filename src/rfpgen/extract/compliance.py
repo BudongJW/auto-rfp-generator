@@ -70,7 +70,9 @@ def extract_compliance(docs: list[Document], profile: Profile, report: Extractio
     for spec in profile.value("compliance.suggested") or []:
         items.append(ComplianceItem(
             kind=spec["kind"], text=spec["text"], related_check=spec.get("related_check"),
-            origin="suggested", method="profile", note="RFP 원문에 근거가 없는 권고 — G1에서 채택 여부를 정하세요",
+            origin="suggested", method="profile",
+            note=(f"근거: {spec['basis']} — RFP 원문에는 없는 권고, G1에서 채택 여부를 정하세요" if spec.get("basis")
+                  else "RFP 원문에 근거가 없는 권고 — G1에서 채택 여부를 정하세요"),
         ))
     stated = [i for i in items if i.origin == "stated"]
     report.stats["compliance_stated"] = len(stated)

@@ -11,28 +11,28 @@ description: 국가 협상에 의한 계약 — SW 개발·유지관리, 정보�
 evaluation:
   tech_price_ratio:
     value: [90, 10]
-    status: provisional
-    ref: "SW사업 기술:가격 배점 관행 — 조사 보고서 2장"
+    status: verified
+    ref: "행정기관 및 공공기관 정보시스템 구축·운영 지침(행정안전부고시 제2025-1호) 제18조①: 기술능력평가 배점한도 90점. 같은 조②: 하드웨어 비중 50% 이상·추정가격 1억 원 미만 개발사업 등은 80점 가능. 조달청 협상에 의한 계약 제안서평가 세부기준(조달청지침 제379호) 제9조①: 정보화사업은 이 지침 제18조를 따름 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
   tech_quant_qual:
     value: [20, 70]
     status: provisional
-    ref: "2025년 공고 예시값(R25BK00879799)"
+    ref: "공고별 값(2025년 공고 R25BK00879799 예시). 협상에 의한 계약체결기준 제16조②는 기술능력 평가를 정량·정성으로 나누라고만 정하고 비율은 정하지 않음 — RFP 값 우선(원문 확인 2026-11-17, docs/analysis/m0-source-check.md)"
   tech_cutoff_pct:
     value: 85
-    status: provisional
-    ref: "협상에 의한 계약체결기준(재정경제부계약예규 제40호) 협상적격 기준"
+    status: verified
+    ref: "(계약예규) 협상에 의한 계약체결기준(재정경제부계약예규 제40호, 2026.1.2. 시행) 제8조①: 기술능력평가 점수가 기술능력평가분야 배점한도의 85% 이상인 자를 협상적격자로 선정 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
   max_points_per_area:
     value: 30
-    status: provisional
-    ref: "SW 기술성 평가기준 별표1 기술제안서 평가항목 및 배점한도"
+    status: verified
+    ref: "소프트웨어 기술성 평가기준 지침(과학기술정보통신부고시 제2025-20호, 2025.4.30. 시행) 별표1 비고: 각 평가부문별 배점한도는 30점을 초과하지 못함(총 배점한도가 100점 이하이면 비율에 맞게 조정) — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
   min_points:
     value: {상생협력: 5, 하도급: 5}
-    status: provisional
-    ref: "SW 기술성 평가기준 별표1"
+    status: verified
+    ref: "같은 지침 별표1 비고: '상생협력', '하도급 계획 적정성' 각 배점한도 5점 이상. 대기업 참여제한 사업·민간투자형 SW사업은 상생협력 제외 가능, 하도급을 허용하지 않는 사업은 하도급 항목 제외 가능 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
   qualitative_grades:
     value: 5
-    status: provisional
-    ref: "SW 기술성 평가기준 세부항목 등급"
+    status: verified
+    ref: "같은 지침 별표1 비고: 각 평가항목은 5등급 내외를 기준으로 절대 또는 상대평가 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
 
 outline:
   is_sw_project:
@@ -42,24 +42,24 @@ outline:
   fixed_chapters:
     value:
       - {key: 제안개요, title: 제안 개요, pages: 5, sections: [제안 배경 및 목적, 제안 범위, 제안의 특장점]}
-      - {key: 제안업체일반, title: 제안업체 일반, pages: 5, sections: [일반현황, 조직 및 인원, 주요 사업 실적]}
+      - {key: 제안업체일반, title: 제안업체 일반, pages: 5, sections: [입찰자 일반현황, 수행조직 및 업무분장, 핵심투입인력 및 이력사항]}
     status: user
-    ref: "실제 RFP 관행(SPRi RFP 2018, KOSA 가이드북) — 쪽수는 제안값"
+    ref: "실제 RFP 관행(SPRi RFP 2018, KOSA 가이드북) — 쪽수는 제안값. '제안업체 일반'의 절 이름은 조달청 세부기준 별지 제5호서식 Ⅰ. 일반현황과 같게 함"
   default_template:
     value:
       - {key: 전략및방법론, title: 전략 및 방법론, sections: [사업 이해도, 추진 전략, 적용 기술, 표준 프레임워크 적용, 개발 방법론]}
-      - {key: 기술및기능, title: 기술 및 기능, sections: [시스템 장비 구성, 기능 요구사항, 보안 요구사항, 데이터 요구사항, 운영 요구사항, 제약사항]}
+      - {key: 기술및기능, title: 기술 및 기능, sections: [시스템 장비구성 요구사항, 기능 요구사항, 보안 요구사항, 데이터 요구사항, 시스템 운영 요구사항, 제약사항]}
       - {key: 성능및품질, title: 성능 및 품질, sections: [성능 요구사항, 품질 요구사항, 인터페이스 요구사항, 테스트 요구사항]}
-      - {key: 프로젝트관리, title: 프로젝트 관리, sections: [관리 방법론, 관리 역량, 일정 계획, 개발 장비]}
-      - {key: 프로젝트지원, title: 프로젝트 지원, sections: [품질 보증, 시험 운영, 교육 훈련, 유지 보수, 기밀 보안, 비상 대책]}
+      - {key: 프로젝트관리, title: 프로젝트 관리, sections: [관리방법론, 관리역량, 일정계획, 개발장비]}
+      - {key: 프로젝트지원, title: 프로젝트 지원, sections: [품질보증, 시험운영, 교육훈련, 유지보수, 기밀보안, 비상대책]}
       - {key: 상생협력하도급, title: 상생협력 및 하도급 계획, sections: [상생협력 계획, 하도급 계획의 적정성]}
       - {key: 그밖의사항, title: 그 밖의 사항, sections: []}
-    status: provisional
-    ref: "[별지 제5호서식] 제안서 서식(소프트웨어개발, 유지관리사업) — 소속 행정규칙 미확인"
+    status: verified
+    ref: "조달청 협상에 의한 계약 제안서평가 세부기준(조달청지침 제379호, 2026.1.26. 시행) [별지 제5호서식] 제안서 서식(예시: 소프트웨어개발, 유지관리사업)의 Ⅱ~Ⅶ과 장·절 이름 일치(제6조의2①: 입찰자는 별지 제5호서식에 따라 제안서 작성). Ⅰ. 일반현황은 fixed_chapters '제안업체 일반'. '상생협력 및 하도급 계획' 장은 별지 5에 없고 SW 기술성 평가기준 별표1 평가항목(각 5점 이상)에 대응하려고 더함 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
   mandatory_chapters:
     value: [상생협력하도급]
-    status: provisional
-    ref: "상생협력·하도급 각 5점 이상 배점(SW 기술성 평가기준)"
+    status: verified
+    ref: "SW 기술성 평가기준 지침 별표1: 상생협력·하도급 계획 적정성 각 5점 이상(제외 가능 사업은 min_points 참고) — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
 
 requirements:
   id_regex:
@@ -106,12 +106,12 @@ requirements:
 submission:
   format:
     value: PDF
-    status: provisional
-    ref: "나라장터 공고 문구 '제안서류 일체는 PDF'"
+    status: verified
+    ref: "조달청 협상에 의한 계약 제안서평가 세부기준(조달청지침 제379호) 제6조의2①1: 제안서는 PDF 파일형식으로 제출(조달청 집행 사업. 수요기관 자체 공고는 공고문 확인) — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
   total_size_limit_mb:
     value: 300
-    status: provisional
-    ref: "공고별 조건 — 나라장터 「입찰공고문 작성시 이용안내」(2025.4.2)"
+    status: verified
+    ref: "같은 기준 제6조의2①2: 제안서 전체의 용량은 300MB를 초과할 수 없음. 같은 조④: 정량평가 분야 제안서는 정성평가 분야와 별도 파일 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
 
 page_limits:
   main_pages:
@@ -142,13 +142,18 @@ compliance:
   # OpenBidKit_Yibiao의 '원문 명시 vs 경험상 권고' 분리를 한국 조달 관행으로 바꿨다(최대 5개).
   suggested:
     value:
-      - {kind: 입찰무효, related_check: SUB, text: "가격입찰서와 제안서 중 하나라도 제출하지 않으면 입찰이 무효가 된다"}
-      - {kind: 제출유의, related_check: SUB, text: "나라장터 임시저장 시 파일이 암호화되고, 최종 제출 후에는 수정·재제출할 수 없다"}
-      - {kind: 평가제외, related_check: FACT, text: "제안 내용이 허위로 확인되면 협상대상에서 제외되거나 계약 후에도 해지될 수 있다"}
-      - {kind: 감점, related_check: LANG, text: "타사를 비방하거나 근거 없이 비교하는 표현은 불이익 대상이다"}
-      - {kind: 감점, related_check: null, text: "입찰자가 평가위원에게 사전접촉하면 감점된다(보도 기준 5점)"}
+      - {kind: 입찰무효, related_check: SUB, text: "가격입찰서와 제안서 중 하나라도 제출하지 않으면 입찰이 무효가 된다",
+         basis: "공고 문구(NIA·서울지방조달청) — 국가계약법 시행규칙 제44조에는 명시 없음, 원문 미확인"}
+      - {kind: 제출유의, related_check: SUB, text: "나라장터 임시저장 시 파일이 암호화되고, 최종 제출 후에는 수정·재제출할 수 없다",
+         basis: "나라장터 이용안내 — 법령 아님, 원문 미확인"}
+      - {kind: 평가제외, related_check: FACT, text: "제출 서류가 부정·허위로 밝혀지면 계약 전에는 협상적격자에서 제외되거나 낙찰자 결정이 취소되고, 계약 후에는 계약이 해제·해지될 수 있다",
+         basis: "조달청 협상에 의한 계약 제안서평가 세부기준(조달청지침 제379호) 제10조⑬"}
+      - {kind: 감점, related_check: LANG, text: "평가위원 과반수가 제안서·발표에 타 업체 비방이 있다고 평가하면 최종 기술능력평가 점수에서 0.1점을 감점하고, 제안서 제출 때 별지 제21·22호 서식을 낸다",
+         basis: "같은 기준 제10조의9, 별표 26(부칙: 2026.6.30.까지 오프라인 평가에만 적용)"}
+      - {kind: 감점, related_check: null, text: "입찰자·이해관계자가 평가위원을 사전접촉한 사실이 확인되면 종합점수(100점 기준)에서 5점을 감점한다",
+         basis: "같은 기준 제14조의2①"}
     status: provisional
-    ref: "NIA·서울지방조달청 공고 문구, 조달청 세부기준 2024-09 개정 보도, 보안뉴스(사전접촉 5점) — 원문 미대조"
+    ref: "항목별 basis 참고. 5개 중 3개(허위·비방·사전접촉)는 조달청지침 제379호 원문 확인, 2개(무효·임시저장)는 공고·이용안내 문구로 미확인 — 원문 확인 2026-11-17, docs/analysis/m0-source-check.md"
 
 page_metrics:
   # 쪽당 글자 수 계산(OpenBidKit pageMetrics 방식): 본문 폭·높이와 글자 크기·줄간격으로 이론 상한을 구한다

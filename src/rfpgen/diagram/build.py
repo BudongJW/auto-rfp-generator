@@ -69,6 +69,7 @@ def plan_figures(outline: Outline, rfp: Rfp, templates: dict[str, Any] | None = 
     leaves = _leaves(outline)
     out: dict[str, list[str]] = {}
     used: dict[str, int] = {}
+    variants: set[tuple[str, str]] = set()      # 조직도는 추진체계도·수행조직도를 하나씩만(같은 모양이 겹치지 않게)
     for rule in templates["assign"]:
         pat = re.compile(rule["match"])
         for by_eval in (False, True):
@@ -79,6 +80,10 @@ def plan_figures(outline: Outline, rfp: Rfp, templates: dict[str, Any] | None = 
                 if text and pat.search(text) and rule["kind"] not in out.get(node.id, []):
                     if by_eval and any(rule["kind"] in v for v in out.values()):
                         continue
+                    variant = (rule["kind"], "체계" if rule["kind"] == "org" and "체계" in node.title else "")
+                    if variant in variants:
+                        continue
+                    variants.add(variant)
                     out.setdefault(node.id, []).append(rule["kind"])
                     used[rule["kind"]] = used.get(rule["kind"], 0) + 1
     for kind, canon in (templates.get("fallback") or {}).items():

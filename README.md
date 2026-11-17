@@ -146,7 +146,7 @@ uv run rfpgen parse 제안요청서.pdf
 uv run rfpgen profile
 ```
 
-`rfpgen profile`은 제도 수치(배점, 협상적격 85%, 300MB 등)를 출처와 상태(`verified`, `provisional`, `user`)와 함께 보여 줍니다. `provisional` 값은 아직 원문과 대조하지 않은 값입니다(설계서 부록 A). RFP에서 읽은 값이 있으면 항상 그 값이 우선합니다. 조직 기준은 `--profile org.yaml`로 덮어씁니다.
+`rfpgen profile`은 제도 수치(배점, 협상적격 85%, 300MB 등)를 출처와 상태(`verified`, `provisional`, `user`)와 함께 보여 줍니다. `verified`는 법령·행정규칙 원문과 대조한 값이고([대조 기록](docs/analysis/m0-source-check.md)), `provisional`은 공고별 관측값이거나 아직 원문을 찾지 못한 값입니다. RFP에서 읽은 값이 있으면 항상 그 값이 우선합니다. 조직 기준은 `--profile org.yaml`로 덮어씁니다.
 
 ## 테스트
 
