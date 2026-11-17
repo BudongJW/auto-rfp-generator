@@ -30,6 +30,25 @@ def sidecar_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "sidecars" / "node"
 
 
+_SOFFICE_PATHS = (
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+)
+
+
+def soffice_path() -> str | None:
+    """LibreOffice 실행 파일: PATH(soffice, libreoffice) → Windows·macOS 기본 설치 위치 → RFPGEN_SOFFICE."""
+    env = os.environ.get("RFPGEN_SOFFICE")
+    if env and Path(env).exists():
+        return env
+    for name in ("soffice", "libreoffice"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return next((p for p in _SOFFICE_PATHS if Path(p).exists()), None)
+
+
 @functools.lru_cache(maxsize=8)
 def playwright_version(sc: str) -> str | None:
     """사이드카에서 쓸 수 있는 Playwright 버전(사이드카 node_modules 또는 전역). 없으면 None."""
@@ -54,7 +73,7 @@ def converters_available() -> dict[str, bool]:
     pw = node and playwright_version(str(sc)) is not None
     return {
         "hwpx": pw and (sc / "node_modules" / "@rhwp" / "core" / "rhwp.js").exists() and (sc / "hwpx_to_pdf.mjs").exists(),
-        "pptx": bool(shutil.which("soffice")),
+        "pptx": soffice_path() is not None,
         "svg": pw and (sc / "svg_to_png.mjs").exists(),
     }
 
@@ -107,7 +126,7 @@ def pptx_to_pdf(src: Path, dst: Path, *, timeout: int = 600) -> None:
         profile = Path(tmp) / "profile"
         out_dir = Path(tmp) / "out"
         env = {**os.environ, "HOME": tmp, "XDG_CACHE_HOME": str(Path(tmp) / "cache")}
-        cmd = ["soffice", f"-env:UserInstallation=file://{profile}", "--headless", "--norestore",
+        cmd = [soffice_path() or "soffice", f"-env:UserInstallation={profile.as_uri()}", "--headless", "--norestore",
                "--convert-to", "pdf", "--outdir", str(out_dir), str(src)]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         produced = out_dir / (src.stem + ".pdf")

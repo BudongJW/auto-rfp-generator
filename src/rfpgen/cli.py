@@ -1,4 +1,4 @@
-"""rfpgen 명령줄 도구(M1: RFP 분석기)."""
+"""rfpgen 명령줄 도구."""
 
 from __future__ import annotations
 
@@ -12,12 +12,106 @@ from .diff import diff_project
 from .parse import UnsafeInputError, collect_inputs, parse_document
 from .pipeline import analyze
 from .profile import load_profile
+from .workflow import remember_kb, resolve_kb
 
-app = typer.Typer(add_completion=False, no_args_is_help=True,
-                  help="나라장터·조달청 제안서 자동생성기 — M1 RFP 분석기")
+app = typer.Typer(add_completion=False, no_args_is_help=True, help=(
+    "나라장터·조달청 기술제안서 작성 작업대.\n\n"
+    "처음이면: rfpgen setup → rfpgen start 제안요청서.hwp 공고문.pdf → rfpgen status 프로젝트폴더"))
+
+START, STEPS, TOOLS = "시작하기", "단계별 작업", "도구"
 
 
-@app.command("analyze")
+@app.command("setup", rich_help_panel=START)
+def setup_cmd(
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="실행할 명령만 보여 줌")] = False,
+    no_browser: Annotated[bool, typer.Option("--no-browser", help="Chromium 내려받기를 건너뜀(이미 있는 Chrome을 쓸 때)")] = False,
+) -> None:
+    """처음 한 번: PDF·도식 변환용 Node 사이드카와 Chromium을 설치하고, LibreOffice·한글 글꼴 설치 방법을 알려 준다."""
+    from .installer import run_setup
+
+    res = run_setup(dry_run=dry_run, browser=not no_browser)
+    for line in res.lines:
+        color = typer.colors.RED if line.lstrip().startswith("✗") else typer.colors.YELLOW if line.startswith("!") else None
+        typer.secho(line, fg=color)
+    if not res.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("sample", rich_help_panel=START)
+def sample_cmd(
+    output: Annotated[Path, typer.Argument(help="만들 파일")] = Path("예제_제안요청서.hwpx"),
+) -> None:
+    """체험용 가상 제안요청서(HWPX)를 만든다 — 실제 RFP 없이 `rfpgen start`를 해 볼 수 있다."""
+    from .sample import build_sample_rfp
+
+    path = build_sample_rfp(output)
+    typer.echo(f"만들었습니다: {path}")
+    typer.echo(f"다음: rfpgen start {path}")
+
+
+@app.command("start", rich_help_panel=START)
+def start_cmd(
+    files: Annotated[list[Path], typer.Argument(help="RFP·공고 첨부(HWP, HWPX, PDF, DOCX, ZIP)", exists=True, dir_okay=False)],
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="프로젝트 폴더(기본: projects/<첫 파일 이름>)")] = None,
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(없으면 회사 정보 칸은 비워 둠)")] = None,
+    llm: Annotated[bool, typer.Option("--llm/--no-llm", help="Claude API로 보조 분석·초안 작성(RFP_ANTHROPIC_API_KEY 필요)")] = False,
+    llm_model: Annotated[str | None, typer.Option("--llm-model")] = None,
+    date: Annotated[str | None, typer.Option("--date", help="별지 날짜 칸(YYYY-MM-DD, 기본: 오늘)")] = None,
+    profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
+) -> None:
+    """한 번에 실행: 분석 → 초안 → 별지 서식 → 요약본·발표자료 → 제출 패키지. 끝나면 다음 할 일을 알려 준다."""
+    import datetime as dt
+
+    from .workflow import default_project_dir, run_start
+
+    project = out or default_project_dir(files[0])
+    provider = None
+    if llm:
+        from .llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(model=llm_model)
+    try:
+        day = dt.date.fromisoformat(date) if date else None
+    except ValueError as exc:
+        typer.secho(f"오류: 날짜 형식이 틀렸습니다(YYYY-MM-DD): {date}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.secho(f"프로젝트: {project}" + (f"  KB: {kb}" if kb else "  (KB 없음 — 회사 정보 칸은 비워 둡니다)"), bold=True)
+    res = run_start(files, project, load_profile(overrides=profile_override or []), kb=kb, provider=provider,
+                    date=day, echo=typer.echo)
+    _echo_status(project)
+    if not res.steps or not res.steps[0].ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("status", rich_help_panel=START)
+def status_cmd(project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)]) -> None:
+    """지금 어디까지 했고 다음에 무엇을 하면 되는지 보여 준다."""
+    _echo_status(project)
+
+
+def _pad(text: str, width: int) -> str:
+    """한글(전각)을 두 칸으로 세어 오른쪽을 채운다."""
+    import unicodedata
+
+    used = sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+    return text + " " * max(width - used, 1)
+
+
+def _echo_status(project: Path) -> None:
+    from .workflow import project_status
+
+    stages, todo = project_status(project)
+    typer.secho(f"\n진행 상태 — {project}", bold=True)
+    for st in stages:
+        mark, color = ("✓", typer.colors.GREEN) if st.done else ("·", None)
+        typer.secho(f"  {mark} {_pad(st.title, 18)} {st.detail}", fg=color)
+    if todo:
+        typer.secho("\n다음 할 일", bold=True)
+        for i, t in enumerate(todo, start=1):
+            typer.echo(f"  {i}. {t}")
+
+
+@app.command("analyze", rich_help_panel=STEPS)
 def analyze_cmd(
     files: Annotated[list[Path], typer.Argument(help="RFP·공고 첨부(PDF, HWP, HWPX, DOCX, ZIP)", exists=True, dir_okay=False)],
     out: Annotated[Path, typer.Option("--out", "-o", help="프로젝트 폴더")] = Path("projects/default"),
@@ -77,7 +171,7 @@ def analyze_cmd(
 
 
 kb_app = typer.Typer(no_args_is_help=True, help="회사 지식베이스(KB) — 실적·인력·인증·수치·재사용 문단")
-app.add_typer(kb_app, name="kb")
+app.add_typer(kb_app, name="kb", rich_help_panel=STEPS)
 
 
 @kb_app.command("init")
@@ -106,10 +200,10 @@ def kb_check_cmd(folder: Annotated[Path, typer.Argument(exists=True, file_okay=F
         typer.secho("  문제 없음", fg=typer.colors.GREEN)
 
 
-@app.command("draft")
+@app.command("draft", rich_help_panel=STEPS)
 def draft_cmd(
     project: Annotated[Path, typer.Argument(help="analyze로 만든 프로젝트 폴더", exists=True, file_okay=False)],
-    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(rfpgen kb init으로 만든 형식)")] = None,
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(생략하면 이 프로젝트에 지난번 쓴 폴더)")] = None,
     llm: Annotated[bool, typer.Option("--llm/--no-llm", help="LLM으로 스토리보드·본문 생성(없으면 작성용 골격)")] = False,
     llm_model: Annotated[str | None, typer.Option("--llm-model")] = None,
     llm_share_kb: Annotated[bool, typer.Option("--llm-share-kb", help="KB의 ID·설명·재사용 문단을 LLM에 보냄(값은 보내지 않음)")] = False,
@@ -129,11 +223,13 @@ def draft_cmd(
         provider = AnthropicProvider(model=llm_model, share_internal=llm_share_kb)
     audit_before = _audit_before(project)
     try:
+        kb = resolve_kb(project, kb)
         res = run_draft(project, profile, kb_dir=kb, provider=provider, share_kb=llm_share_kb,
                         sections=set(section) if section else None, refresh_storyboard=refresh_storyboard, style_path=style)
     except FileNotFoundError as exc:
         typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
+    remember_kb(project, kb)
     origins = Counter(d.origin for d in res.drafts)
     rep = res.check
     typer.secho(f"\n초안 완료 — {res.project}", bold=True)
@@ -184,10 +280,10 @@ def _echo_figures(figs: dict) -> None:
         typer.secho(f"    그림 변환 실패 — 자리표시 상자를 넣었습니다: {err[:120]}", fg=typer.colors.YELLOW)
 
 
-@app.command("figures")
+@app.command("figures", rich_help_panel=STEPS)
 def figures_cmd(
     project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
-    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(조직도의 인력 역할·등급)")] = None,
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(생략하면 지난번 폴더)")] = None,
     style: Annotated[Path | None, typer.Option("--style")] = None,
     profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
 ) -> None:
@@ -195,7 +291,8 @@ def figures_cmd(
     from .draft.pipeline import refresh_figures
 
     try:
-        res = refresh_figures(project, load_profile(overrides=profile_override or []), kb_dir=kb, style_path=style)
+        res = refresh_figures(project, load_profile(overrides=profile_override or []), kb_dir=resolve_kb(project, kb),
+                              style_path=style)
     except FileNotFoundError as exc:
         typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
@@ -207,7 +304,7 @@ def figures_cmd(
     typer.echo(f"  본문: {res.outputs['proposal']}  점검: {res.outputs['check_md']}")
 
 
-@app.command("slides")
+@app.command("slides", rich_help_panel=STEPS)
 def slides_cmd(
     project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
     style: Annotated[Path | None, typer.Option("--style")] = None,
@@ -226,16 +323,17 @@ def slides_cmd(
     typer.echo(f"대본·예상 질문: {res.script}")
 
 
-@app.command("package")
+@app.command("package", rich_help_panel=STEPS)
 def package_cmd(
     project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
-    kb: Annotated[Path | None, typer.Option("--kb", help="블라인드 점검용 회사 KB 폴더")] = None,
+    kb: Annotated[Path | None, typer.Option("--kb", help="블라인드 점검용 회사 KB 폴더(생략하면 지난번 폴더)")] = None,
     profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
 ) -> None:
     """HWPX·PPTX를 PDF로 바꾸고 파일 정보를 정리해 submission/에 모은 뒤 쪽수·용량·글꼴·블라인드를 점검한다."""
     from .package import build_package
 
     try:
+        kb = resolve_kb(project, kb)
         res = build_package(project, load_profile(overrides=profile_override or []), kb_dir=kb)
     except FileNotFoundError as exc:
         typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
@@ -251,10 +349,10 @@ def package_cmd(
     typer.echo(f"  제출 전 점검표: {res.checklist}")
 
 
-@app.command("forms")
+@app.command("forms", rich_help_panel=STEPS)
 def forms_cmd(
     project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
-    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(회사 정보·실적·인력·인증)")] = None,
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(생략하면 지난번 폴더)")] = None,
     date: Annotated[str | None, typer.Option("--date", help="서식 날짜 칸에 넣을 날짜(YYYY-MM-DD, 기본: 오늘)")] = None,
 ) -> None:
     """공고 첨부(HWPX·HWP)의 별지 서식을 서식별로 떼어 내 빈칸을 KB·RFP 값으로 채운다(out/forms/)."""
@@ -264,7 +362,9 @@ def forms_cmd(
 
     try:
         day = dt.date.fromisoformat(date) if date else None
+        kb = resolve_kb(project, kb)
         rep = run_forms(project, kb_dir=kb, date=day)
+        remember_kb(project, kb)
     except (FileNotFoundError, ValueError) as exc:
         typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
@@ -280,7 +380,7 @@ def forms_cmd(
     typer.echo(f"  결과: {project / 'out' / 'forms' / 'forms.md'}")
 
 
-@app.command("gate")
+@app.command("gate", rich_help_panel=STEPS)
 def gate_cmd(
     project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
     gate: Annotated[str | None, typer.Argument(help="G1~G5(없으면 상태만 보여 줌)")] = None,
@@ -318,7 +418,7 @@ def gate_cmd(
             typer.echo(f"      - {msg}")
 
 
-@app.command("diff")
+@app.command("diff", rich_help_panel=TOOLS)
 def diff_cmd(
     project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)],
     from_version: Annotated[int | None, typer.Option("--from", help="비교 기준 버전(기본: 직전)")] = None,
@@ -339,7 +439,7 @@ def diff_cmd(
     typer.echo(f"\n산출물:\n  {md_path}\n  {json_path}")
 
 
-@app.command("parse")
+@app.command("parse", rich_help_panel=TOOLS)
 def parse_cmd(
     file: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
     as_json: Annotated[bool, typer.Option("--json", help="DocIR 전체를 JSON으로 출력")] = False,
@@ -367,7 +467,7 @@ def parse_cmd(
                 typer.echo(f"  {'  ' * ((b.level or 1) - 1)}{b.text[:70]}" + (f"  (p.{b.page})" if b.page else ""))
 
 
-@app.command("doctor")
+@app.command("doctor", rich_help_panel=START)
 def doctor_cmd(
     full: Annotated[bool, typer.Option("--full", help="한글 글자가 든 SVG·HWPX를 실제로 변환해 본다(수 초)")] = False,
 ) -> None:
@@ -388,7 +488,7 @@ def doctor_cmd(
         raise typer.Exit(code=1)
 
 
-@app.command("profile")
+@app.command("profile", rich_help_panel=TOOLS)
 def profile_cmd(
     profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
 ) -> None:

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 
-from .render.pdf import RenderError, hwpx_to_pdf, playwright_version, sidecar_dir, svgs_to_png
+from .render.pdf import RenderError, hwpx_to_pdf, playwright_version, sidecar_dir, soffice_path, svgs_to_png
 
 
 @dataclass
@@ -71,7 +71,7 @@ def run_doctor(full: bool = False) -> list[Check]:
         path = Path(os.environ["RFPGEN_CHROMIUM_PATH"])
         out.append(Check("Chromium(RFPGEN_CHROMIUM_PATH)", "ok" if path.exists() else "warn", str(path), "PDF·도식",
                          "" if path.exists() else "경로를 확인하세요"))
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    soffice = soffice_path()
     out.append(Check("LibreOffice", "ok" if soffice else "warn", soffice or "없음", "PPTX → PDF(요약본·발표자료)",
                      "" if soffice else "sudo apt-get install -y libreoffice-impress"))
 

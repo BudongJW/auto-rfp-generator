@@ -48,3 +48,19 @@ jobs:
       - run: uv sync --frozen
       - run: uv run rfpgen doctor --full
       - run: uv run pytest -q
+
+  docker:
+    name: docker image (설치 없이 쓰는 이미지)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t rfpgen:ci .
+      - name: 이미지 안에서 설치 점검(실제 변환 포함)
+        run: docker run --rm rfpgen:ci doctor --full
+      - name: 이미지로 한 번에 실행(합성 RFP)
+        run: |
+          mkdir -p smoke && chmod 777 smoke
+          docker run --rm -v "$PWD/smoke:/work" rfpgen:ci sample 제안요청서.hwpx
+          docker run --rm -v "$PWD/smoke:/work" rfpgen:ci start 제안요청서.hwpx
+          test -f smoke/projects/제안요청서/submission/01_정성제안서.pdf
+          test -f smoke/projects/제안요청서/out/forms/forms.json

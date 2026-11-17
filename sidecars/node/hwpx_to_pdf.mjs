@@ -50,8 +50,8 @@ const fontFaces = aliases
   .map((a) => a.split('='))
   .filter((p) => p.length === 2)
   .map(([from, to]) => `
-    @font-face { font-family: "${from}"; font-weight: 400; src: local("${to}"), local("${to} Regular"); }
-    @font-face { font-family: "${from}"; font-weight: 700; src: local("${to} Bold"), local("${to}"); }`)
+    @font-face { font-family: "${from}"; font-weight: 400; src: local("${to}"), local("${to} Regular"), local("${from}"), local("${from} Regular"); }
+    @font-face { font-family: "${from}"; font-weight: 700; src: local("${to} Bold"), local("${to}"), local("${from} Bold"), local("${from}"); }`)
   .join('');
 const pxToMm = (px) => (px * 25.4) / 96;
 
