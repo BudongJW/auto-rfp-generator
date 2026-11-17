@@ -278,6 +278,44 @@ def forms_cmd(
     typer.echo(f"  결과: {project / 'out' / 'forms' / 'forms.md'}")
 
 
+@app.command("gate")
+def gate_cmd(
+    project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    gate: Annotated[str | None, typer.Argument(help="G1~G5(없으면 상태만 보여 줌)")] = None,
+    by: Annotated[str | None, typer.Option("--by", help="승인자 이름(project.yaml에만 기록)")] = None,
+    note: Annotated[str, typer.Option("--note", help="승인 메모")] = "",
+    section: Annotated[list[str] | None, typer.Option("--section", help="G4: 이 절만 승인(여러 번 가능)")] = None,
+    force: Annotated[bool, typer.Option("--force", help="승인 조건을 건너뜀(기록에 남음)")] = False,
+    revoke: Annotated[bool, typer.Option("--revoke", help="승인 취소")] = False,
+) -> None:
+    """사람 승인 게이트 G1~G5: 상태를 보거나 승인·취소한다. 근거 산출물이 바뀌면 승인은 '재확인 필요'가 된다."""
+    from .gates import STATUS_KO, GateError, approve, gate_status
+    from .gates import revoke as revoke_gate
+
+    try:
+        if gate and revoke:
+            revoke_gate(project, gate)
+            typer.echo(f"{gate.upper()} 승인을 취소했습니다")
+        elif gate:
+            if not by:
+                typer.secho("승인하려면 --by로 승인자를 적어 주세요(취소는 --revoke)", fg=typer.colors.RED, err=True)
+                raise typer.Exit(code=2)
+            st = approve(project, gate, by=by, note=note, sections=section, force=force)
+            typer.secho(f"{st.gate} {st.name}: {STATUS_KO[st.status]}", bold=True)
+        states = gate_status(project)
+    except GateError as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    color = {"approved": typer.colors.GREEN, "stale": typer.colors.YELLOW, "partial": typer.colors.YELLOW,
+             "pending": None}
+    for s in states:
+        who = f" — {s.record.get('by')} {str(s.record.get('at', ''))[:16]}" if s.record else ""
+        forced = " (강제)" if s.record and s.record.get("forced") else ""
+        typer.secho(f"  {s.gate} {s.name:6s} {STATUS_KO[s.status]}{who}{forced}", fg=color[s.status])
+        for msg in s.problems + s.notes:
+            typer.echo(f"      - {msg}")
+
+
 @app.command("diff")
 def diff_cmd(
     project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)],

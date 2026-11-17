@@ -215,6 +215,18 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
         for f in prev.findings:
             if f.rule != "PAGE-001":
                 rep.findings.append(f)
+    # GATE-001: 사람 승인 게이트(G1~G4). G5는 이 점검을 보고 사람이 승인한다
+    from ..gates import STATUS_KO, GateError, gate_status
+
+    try:
+        gates = gate_status(project)
+    except GateError:
+        gates = []
+    for gs in gates:
+        if gs.gate != "G5" and gs.status != "approved":
+            _f(rep, "GATE-001", "major", f"{gs.gate} {gs.name}: {STATUS_KO[gs.status]} — `rfpgen gate {project.name} {gs.gate} --by 이름`",
+               basis="설계서 3장 게이트(P5)")
+    rep.stats["gates"] = ", ".join(f"{gs.gate}:{gs.status}" for gs in gates)
     form_checks = sorted((project / "checks").glob("forms-*.json"))
     if form_docs and form_checks:
         rep.findings += CheckReport.model_validate_json(form_checks[-1].read_text(encoding="utf-8")).findings
@@ -289,6 +301,7 @@ def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: in
               f"- 블라인드 평가: {'예 — 본문·파일 정보·파일 이름에 회사 식별 표기가 없어야 합니다' if blind else '아니오'}", "",
               "## 업로드 전 확인(사람)", "",
               "- [ ] blocker 0건을 확인했다(G5)",
+              "- [ ] G1~G4 승인(`rfpgen gate`)을 마치고, 이 점검표를 확인한 뒤 G5를 승인했다",
               "- [ ] 나라장터 제출 화면에서 파일마다 문서구분(정성제안서·제안요약서·발표자료·정량제안서·하도급 계획서·기타)을 맞게 지정했다",
               ("- [ ] 별지 서식 PDF의 빈칸·선택 칸(□)·서명·날인을 확인하고, 날인이 필요한 서식은 날인본으로 바꿨다(out/forms/forms.md)"
                if has_forms else "- [ ] 정량제안서·별지 서식·하도급 계획서를 공고 양식으로 따로 준비해 함께 올렸다"),

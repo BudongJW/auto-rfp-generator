@@ -95,6 +95,23 @@ uv run rfpgen package projects/my-bid --kb kb
 - `slides`: 최신 절 초안으로 `out/summary.pptx`(요약본, A4 가로), `out/presentation.pptx`(발표자료, 16:9), `out/script.md`(발표 대본·예상 질문)를 만듭니다. 대본은 발표자 노트에도 들어갑니다.
 - `package`: HWPX·PPTX를 PDF로 바꾸고 작성자 등 파일 정보를 지워 `submission/`에 `01_정성제안서.pdf`, `02_제안요약서.pdf`, `03_발표자료.pdf`와 `제출전점검표.md`를 만듭니다. 실제 렌더 쪽수·총 용량·글꼴 임베딩·파일 정보의 회사 식별 표기를 점검합니다. 나라장터 업로드는 사람이 합니다.
 
+### 사람 승인 게이트(G1~G5)
+
+생성기는 자동으로 제출하지 않습니다. 단계마다 사람이 확인하고 승인 기록을 남깁니다(설계서 3장).
+
+```bash
+uv run rfpgen gate projects/my-bid
+```
+
+```bash
+uv run rfpgen gate projects/my-bid G1 --by 홍길동 --note "평가표·요구사항 원문 대조"
+```
+
+- G1 추출 확정 → G2 설계 확정(연결되지 않은 요구사항 0건) → G3 전략 확정 → G4 절 승인(`--section`으로 절별) → G5 제출 승인(패키지 점검 blocker 0건) 순서로만 승인됩니다.
+- 승인에는 근거 산출물의 지문이 남습니다. 정정공고로 RFP 새 판이 나오거나 목차·스토리보드·절이 바뀌면 그 승인과 뒤 게이트가 '재확인 필요'가 됩니다.
+- 조건을 건너뛰어야 하면 `--force`를 쓰되 기록에 남습니다. 취소는 `--revoke`입니다. 승인자 이름은 `project.yaml`에만 기록됩니다.
+- `rfpgen package`는 G1~G4가 승인되지 않았으면 GATE-001로 알리고, 제출 전 점검표에 G5 승인 항목을 넣습니다.
+
 ### 도식(M3)
 
 `rfpgen draft`는 절 제목에 맞춰 도식을 자동으로 넣습니다. 추진 일정(간트), 조직도·추진체계도, WBS, 추진 절차, 목표 시스템 구성도입니다. 그림은 `out/figures/`에 SVG와 PNG(200dpi)로 남고, 본문 HWPX에는 캡션(`[그림 n] 제목`)과 함께, 요약본·발표자료에는 본문 오른쪽에 들어갑니다.
@@ -157,7 +174,7 @@ uv run rfpgen profile
 uv run pytest
 ```
 
-테스트는 공개 RFP 형식을 흉내 낸 합성 문서로 돌아갑니다. 실제 RFP 원문은 재배포 라이선스를 확인하기 전까지 저장소에 넣지 않습니다.
+테스트는 공개 RFP 형식을 흉내 낸 합성 문서로 돌아갑니다. 실제 RFP 원문은 재배포 라이선스를 확인하기 전까지 저장소에 넣지 않습니다. 변환기(Node 사이드카·LibreOffice)가 없으면 렌더 테스트는 건너뜁니다. GitHub Actions(`.github/workflows/test.yml`)는 파이썬만 돌리는 작업과 렌더 경로까지 돌리는 작업을 나눠 실행합니다.
 
 ## 알려진 한계
 

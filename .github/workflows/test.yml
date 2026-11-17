@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# 테스트: 파이썬만(빠름)과 렌더 경로 포함(PDF·도식·장표 변환) 두 가지로 돌린다.
+name: test
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen
+      # 변환기(Node 사이드카·LibreOffice)가 없으면 렌더 테스트는 건너뛰고 나머지를 본다
+      - run: uv run pytest -q
+
+  render:
+    name: render (PDF·도식·장표 포함)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sidecars/node/package-lock.json
+      - name: 한글 글꼴·LibreOffice
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk libreoffice-impress
+      - name: Node 사이드카(rhwp, Playwright Chromium)
+        working-directory: sidecars/node
+        run: npm ci && npx playwright install --with-deps chromium
+      - run: uv sync --frozen
+      - run: uv run rfpgen doctor --full
+      - run: uv run pytest -q

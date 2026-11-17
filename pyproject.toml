@@ -1,7 +1,7 @@
 [project]
 name = "rfpgen"
 version = "0.1.0"
-description = "나라장터·조달청 제안서 자동생성기 — M1 RFP 분석기"
+description = "나라장터·조달청 기술제안서 작성 작업대 — RFP 분석·초안·장표·별지·제출 패키지"
 readme = "README.md"
 requires-python = ">=3.12"
 license-files = ["LICENSE"]
