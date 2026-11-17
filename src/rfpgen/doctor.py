@@ -85,9 +85,15 @@ def run_doctor(full: bool = False) -> list[Check]:
         out.append(Check("한글 글꼴(서버 렌더)", "warn", "확인 못 함(fc-list 없음)", "PDF·도식 글자",
                          "Noto Sans/Serif CJK KR이 설치돼 있는지 확인"))
 
-    key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
-    out.append(Check("Claude API 인증", "ok" if key else "warn", "설정됨" if key else "없음", "--llm(선택)",
-                     "" if key else "ANTHROPIC_API_KEY 환경변수(없어도 골격 모드는 동작)"))
+    from .llm.anthropic_provider import KEY_ENV, credential_source
+
+    src = credential_source()
+    detail = f"설정됨({src})" if src else "없음"
+    hint = "" if src else f"{KEY_ENV} 환경변수(없어도 골격 모드는 동작)"
+    if src and src != KEY_ENV and os.environ.get("ANTHROPIC_BASE_URL"):
+        hint = (f"ANTHROPIC_BASE_URL이 설정돼 있어 그 주소로 보냅니다 — 다른 도구용 주소라면 {KEY_ENV}를 쓰세요"
+                "(공식 API 주소로 보냄)")
+    out.append(Check("Claude API 인증", "ok" if src else "warn", detail, "--llm(선택)", hint))
 
     if full:
         out += _full_checks(rhwp.exists() and bool(pw))

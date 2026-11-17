@@ -10,8 +10,8 @@ from rfpgen.render.pdf import converters_available
 
 
 def test_doctor_reports_each_tool(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "RFP_ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     checks = {c.name: c for c in run_doctor()}
     assert checks["Python"].status == "ok" and checks["python-hwpx"].status == "ok"
     for name in ("Node", "@rhwp/core(사이드카)", "Playwright", "LibreOffice", "한글 글꼴(서버 렌더)"):
@@ -21,10 +21,23 @@ def test_doctor_reports_each_tool(monkeypatch):
 
 
 def test_doctor_never_prints_key(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-비밀값")
+    monkeypatch.setenv("RFP_ANTHROPIC_API_KEY", "sk-test-비밀값")
     r = CliRunner().invoke(app, ["doctor"])
     assert r.exit_code == 0, r.output
-    assert "비밀값" not in r.output and "설정됨" in r.output
+    assert "비밀값" not in r.output and "설정됨(RFP_ANTHROPIC_API_KEY)" in r.output
+
+
+def test_dedicated_key_uses_official_base_url(monkeypatch):
+    from rfpgen.llm.anthropic_provider import AnthropicProvider, client_options
+
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://다른-도구-게이트웨이.invalid")
+    monkeypatch.delenv("RFPGEN_ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.delenv("RFP_ANTHROPIC_API_KEY", raising=False)
+    assert client_options() == {}                                  # 전용 키가 없으면 SDK 기본
+    monkeypatch.setenv("RFP_ANTHROPIC_API_KEY", "sk-test")
+    assert client_options() == {"api_key": "sk-test", "base_url": "https://api.anthropic.com"}
+    client = AnthropicProvider().client
+    assert str(client.base_url).startswith("https://api.anthropic.com") and client.api_key == "sk-test"
 
 
 def test_missing_sidecar_is_a_warning_not_failure(tmp_path, monkeypatch):

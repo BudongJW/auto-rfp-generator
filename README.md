@@ -46,8 +46,11 @@ uv run rfpgen diff projects/my-bid
 결정적 규칙으로 못 채운 작성지침 값, 규칙에 걸리지 않은 무효·감점 사유와 참가자격, 요구사항 ID 없이 문장으로만 적힌 요구사항을 Claude API로 보강합니다. 근거 인용 검증을 통과한 값만 받고, 모두 `method=llm`·`status=proposed`로 들어가 사람이 확인합니다.
 
 ```bash
-export ANTHROPIC_API_KEY=...
+export RFP_ANTHROPIC_API_KEY=...
 ```
+
+- rfpgen 전용 키 `RFP_ANTHROPIC_API_KEY`가 있으면 그 키로 공식 API 주소에 보냅니다(다른 주소는 `RFPGEN_ANTHROPIC_BASE_URL`). Claude Code 같은 도구가 자기 용도로 둔 `ANTHROPIC_BASE_URL`을 물려받지 않기 위해서입니다. 없으면 `ANTHROPIC_API_KEY` 등 SDK 기본 인증을 씁니다.
+- 실행이 끝나면 감사 기록의 토큰과 프로필 단가(`llm.pricing_usd_per_mtok`)로 추정 비용을 보여 줍니다. 실제 청구액은 Console에서 확인하세요.
 
 ```bash
 uv run rfpgen analyze 제안요청서.hwpx -o projects/my-bid --llm

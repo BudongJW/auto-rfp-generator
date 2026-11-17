@@ -23,7 +23,7 @@ def analyze_cmd(
     out: Annotated[Path, typer.Option("--out", "-o", help="프로젝트 폴더")] = Path("projects/default"),
     profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p", help="프로필 오버라이드 YAML(여러 개 가능)")] = None,
     sw: Annotated[bool | None, typer.Option("--sw/--no-sw", help="SW사업 여부(상생협력·하도급 장 자동 삽입)")] = None,
-    llm: Annotated[bool, typer.Option("--llm/--no-llm", help="LLM 보조 추출(Claude API, ANTHROPIC_API_KEY 필요)")] = False,
+    llm: Annotated[bool, typer.Option("--llm/--no-llm", help="LLM 보조 추출(Claude API, RFP_ANTHROPIC_API_KEY 또는 ANTHROPIC_API_KEY 필요)")] = False,
     llm_model: Annotated[str | None, typer.Option("--llm-model", help="모델 ID(기본: RFPGEN_LLM_MODEL 또는 최신 Opus 계열)")] = None,
 ) -> None:
     """RFP를 분석해 평가표·요구사항·작성지침·목차·쪽수 예산·추적표·질의서 초안을 만든다."""
@@ -35,6 +35,7 @@ def analyze_cmd(
         provider = AnthropicProvider(model=llm_model)
     if sw is not None:
         profile = profile.merged({"outline": {"is_sw_project": {"value": sw, "status": "user", "ref": "CLI"}}}, "cli")
+    audit_before = _audit_before(out)
     try:
         result = analyze(files, out, profile, llm_provider=provider)
     except UnsafeInputError as exc:
@@ -61,6 +62,7 @@ def analyze_cmd(
         typer.echo(f"  LLM 보조    : 호출 {st.get('llm_calls', 0)}회, 입력 {st.get('llm_input_tokens', 0):,} / 캐시 읽기 "
                    f"{st.get('llm_cache_read_tokens', 0):,} / 출력 {st.get('llm_output_tokens', 0):,} 토큰"
                    f" (기록: {result.project_dir / 'audit' / 'llm_calls.jsonl'})")
+        _echo_cost(result.project_dir, profile, audit_before)
         for f in rep.findings:
             if f.code in ("LLM-ERROR", "LLM-REFUSAL"):
                 typer.secho(f"    - [{f.code}] {f.message}", fg=typer.colors.YELLOW)
@@ -125,6 +127,7 @@ def draft_cmd(
         from .llm.anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider(model=llm_model, share_internal=llm_share_kb)
+    audit_before = _audit_before(project)
     try:
         res = run_draft(project, profile, kb_dir=kb, provider=provider, share_kb=llm_share_kb,
                         sections=set(section) if section else None, refresh_storyboard=refresh_storyboard, style_path=style)
@@ -145,11 +148,28 @@ def draft_cmd(
         u = res.llm_usage
         typer.echo(f"  LLM         : 호출 {u.get('calls', 0)}회, 입력 {u.get('input_tokens', 0):,} / 캐시 읽기 "
                    f"{u.get('cache_read_input_tokens', 0):,} / 출력 {u.get('output_tokens', 0):,} 토큰")
+        _echo_cost(project, profile, audit_before)
     for n in res.notes:
         typer.secho(f"  - {n}", fg=typer.colors.YELLOW)
     typer.echo("\n산출물:")
     for key in ("proposal", "storyboard_md", "trace_xlsx", "check_md"):
         typer.echo(f"  {res.outputs[key]}")
+
+
+def _echo_cost(project: Path, profile, since_line: int) -> None:
+    from .llm.cost import estimate
+
+    est = estimate(project / "audit" / "llm_calls.jsonl", profile.value("llm.pricing_usd_per_mtok") or {},
+                   since_line=since_line)
+    if est.calls:
+        extra = f", 단가 모름: {', '.join(est.unpriced)}" if est.unpriced else ""
+        typer.echo(f"  추정 비용   : 약 ${est.usd:.2f} (프로필 단가 기준, 실제 청구는 Console 확인{extra})")
+
+
+def _audit_before(project: Path) -> int:
+    from .llm.cost import audit_lines
+
+    return audit_lines(project / "audit" / "llm_calls.jsonl")
 
 
 def _echo_figures(figs: dict) -> None:

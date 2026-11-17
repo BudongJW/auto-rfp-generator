@@ -9,6 +9,10 @@
 
 모델 ID는 저장소에 고정하지 않는다: --llm-model 또는 환경변수 RFPGEN_LLM_MODEL, 없으면 Models API에서
 가장 최근 Opus 계열을 고른다.
+
+인증: rfpgen 전용 키 RFP_ANTHROPIC_API_KEY가 있으면 그 키로 공식 API 주소(또는 RFPGEN_ANTHROPIC_BASE_URL)에
+보낸다. Claude Code 같은 도구가 자기 용도로 둔 ANTHROPIC_BASE_URL을 물려받지 않기 위해서다. 없으면 SDK 기본
+(ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ant 로그인 프로필 순)을 따른다.
 """
 
 from __future__ import annotations
@@ -20,6 +24,27 @@ from .gateway import LLMCall, LLMError, ProviderReply
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 DEFAULT_FAMILY = "claude-opus"
+KEY_ENV = "RFP_ANTHROPIC_API_KEY"
+BASE_URL_ENV = "RFPGEN_ANTHROPIC_BASE_URL"
+OFFICIAL_BASE_URL = "https://api.anthropic.com"
+
+
+def client_options() -> dict[str, str]:
+    """rfpgen 전용 키가 있으면 {api_key, base_url}, 없으면 빈 dict(SDK 기본 인증)."""
+    key = os.environ.get(KEY_ENV)
+    if not key:
+        return {}
+    return {"api_key": key, "base_url": os.environ.get(BASE_URL_ENV) or OFFICIAL_BASE_URL}
+
+
+def credential_source() -> str:
+    """인증 정보가 어디서 오는지(값은 돌려주지 않는다)."""
+    if os.environ.get(KEY_ENV):
+        return KEY_ENV
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        if os.environ.get(name):
+            return name
+    return ""
 
 
 class AnthropicProvider:
@@ -38,7 +63,7 @@ class AnthropicProvider:
         if self._client is None:
             import anthropic
 
-            self._client = anthropic.Anthropic(timeout=self.timeout)
+            self._client = anthropic.Anthropic(timeout=self.timeout, **client_options())
         return self._client
 
     def resolve_model(self) -> str:
