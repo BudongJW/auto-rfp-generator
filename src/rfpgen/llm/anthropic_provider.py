@@ -24,10 +24,10 @@ DEFAULT_FAMILY = "claude-opus"
 
 class AnthropicProvider:
     name = "anthropic"
-    allowed_data_classes = {"public"}  # 공개 RFP만 보낸다. 회사 KB(confidential)는 M2에서 정책과 함께 연다
-
     def __init__(self, model: str | None = None, client: Any = None, use_fallbacks: bool = True,
-                 timeout: float = 600.0) -> None:
+                 timeout: float = 600.0, share_internal: bool = False) -> None:
+        # 기본은 공개 RFP만 보낸다. KB 설명·과거 제안서 문단(internal)은 사용자가 --llm-share-kb로 허용할 때만.
+        self.allowed_data_classes = {"public", "internal"} if share_internal else {"public"}
         self._client = client
         self._model = model or os.environ.get("RFPGEN_LLM_MODEL") or None
         self.use_fallbacks = use_fallbacks

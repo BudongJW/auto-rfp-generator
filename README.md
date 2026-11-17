@@ -6,7 +6,7 @@
 - 조사 보고서: [reports/](reports/)
 - 외부 코드 분석: [docs/analysis/](docs/analysis/)
 
-## 현재 단계: M1 RFP 분석기
+## 현재 단계: M1 RFP 분석기 + M2 본문 초안(1차)
 
 RFP와 공고 첨부를 넣으면 다음을 만듭니다. 모든 추출값에는 원문 위치(문서·블록·쪽)가 붙습니다.
 
@@ -58,6 +58,27 @@ uv run rfpgen analyze 제안요청서.hwpx -o projects/my-bid --llm
 - 호출마다 모델·토큰·캐시 적중·결과가 `audit/llm_calls.jsonl`에 남습니다.
 - 인증 정보가 없거나 호출이 실패해도 LLM 과제만 건너뛰고 나머지 분석 결과는 그대로 나옵니다.
 
+### 본문 초안(M2)
+
+회사 지식베이스(KB)를 만들고, 분석한 프로젝트에서 본문 초안을 만듭니다. 결과는 `out/proposal.hwpx`(A4 세로 보고서체), `strategy/storyboard.md`(스토리보드), `out/trace_draft.xlsx`(대응 방안이 채워진 추적표와 자료 요청서), `checks/*.md`(제출 전 점검)입니다.
+
+```bash
+uv run rfpgen kb init kb
+```
+
+```bash
+uv run rfpgen draft projects/my-bid --kb kb
+```
+
+```bash
+uv run rfpgen draft projects/my-bid --kb kb --llm
+```
+
+- `--llm` 없이 실행하면 평가 질문·요구사항·필요 근거를 `[확인 필요]` 자리표시자와 함께 배치한 **작성용 골격**을 만듭니다.
+- `--llm`이면 스토리보드와 절 본문을 생성합니다. 회사 수치는 LLM이 `{{fact:F-001}}` 같은 토큰으로만 쓰고 값은 KB에서 채웁니다. 수치 값은 보내지 않습니다.
+- KB의 ID·설명·재사용 문단까지 보내려면 `--llm-share-kb`를 줍니다(기본은 공개 RFP만).
+- `strategy/storyboard.json`을 고친 뒤 다시 실행하면 고친 내용으로 씁니다. `--section S-3-1`로 일부 절만 다시 쓸 수 있습니다.
+
 ```bash
 uv run rfpgen parse 제안요청서.pdf
 ```
@@ -78,7 +99,8 @@ uv run pytest
 
 ## 알려진 한계
 
-- **LLM 보조 추출은 아직 실제 API로 품질·비용을 재지 않았습니다.** 가짜 공급자로 검증 규칙과 요청 형태만 테스트했습니다.
+- **LLM 보조 추출과 LLM 초안 생성은 아직 실제 API로 품질·비용을 재지 않았습니다.** 가짜 공급자로 검증 규칙과 요청 형태만 테스트했습니다.
+- **쪽수는 글자 수로 추정합니다.** 실제 쪽수는 M3의 PDF 렌더 뒤에 확정합니다. 생성한 HWPX는 한글에서 열어 모양을 확인해 주세요.
 - **스캔 PDF는 아직 읽지 못합니다.** 숫자가 도형으로 그려진 PDF도 마찬가지입니다. 대신 해당 문장을 찾아 "숫자를 읽지 못함"으로 보고합니다.
 - **배포용·암호 HWP는 열지 않습니다.** 한글에서 PDF로 저장해 올려 주세요.
 - **상세화 등급(S~D)은 휴리스틱 추정입니다.**

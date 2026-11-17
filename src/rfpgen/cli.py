@@ -74,6 +74,83 @@ def analyze_cmd(
         typer.echo(f"  {result.outputs[key]}")
 
 
+kb_app = typer.Typer(no_args_is_help=True, help="회사 지식베이스(KB) — 실적·인력·인증·수치·재사용 문단")
+app.add_typer(kb_app, name="kb")
+
+
+@kb_app.command("init")
+def kb_init_cmd(folder: Annotated[Path, typer.Argument(help="만들 KB 폴더")]) -> None:
+    """예시 KB 폴더(company.yaml, projects.csv, people.csv, certifications.csv, content/)를 만든다."""
+    from .kb import init_kb
+
+    made = init_kb(folder)
+    typer.echo(f"{folder}: 파일 {len(made)}개를 만들었습니다(이미 있는 파일은 그대로 둠)")
+    for p in made:
+        typer.echo(f"  {p}")
+
+
+@kb_app.command("check")
+def kb_check_cmd(folder: Annotated[Path, typer.Argument(exists=True, file_okay=False)]) -> None:
+    """KB를 읽고 ID 중복, 설명 속 숫자, 유효기간 만료, 블라인드 사전 누락을 점검한다."""
+    from .kb import check_kb, load_kb
+
+    kb = load_kb(folder)
+    typer.echo(f"fact {len(kb.facts)} · 실적 {len(kb.projects)} · 인력 {len(kb.people)} · 인증 {len(kb.certifications)} · "
+               f"재사용 문단 {len(kb.content)}")
+    warnings = check_kb(kb)
+    for w in warnings:
+        typer.secho(f"  경고: {w}", fg=typer.colors.YELLOW)
+    if not warnings:
+        typer.secho("  문제 없음", fg=typer.colors.GREEN)
+
+
+@app.command("draft")
+def draft_cmd(
+    project: Annotated[Path, typer.Argument(help="analyze로 만든 프로젝트 폴더", exists=True, file_okay=False)],
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(rfpgen kb init으로 만든 형식)")] = None,
+    llm: Annotated[bool, typer.Option("--llm/--no-llm", help="LLM으로 스토리보드·본문 생성(없으면 작성용 골격)")] = False,
+    llm_model: Annotated[str | None, typer.Option("--llm-model")] = None,
+    llm_share_kb: Annotated[bool, typer.Option("--llm-share-kb", help="KB의 ID·설명·재사용 문단을 LLM에 보냄(값은 보내지 않음)")] = False,
+    section: Annotated[list[str] | None, typer.Option("--section", help="이 절만 다시 씀(예: S-3-1, 여러 번 가능)")] = None,
+    refresh_storyboard: Annotated[bool, typer.Option("--refresh-storyboard", help="기존 storyboard.json을 무시하고 새로 만듦")] = False,
+    style: Annotated[Path | None, typer.Option("--style", help="스타일 YAML(기본: 보고서체)")] = None,
+    profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
+) -> None:
+    """스토리보드와 절 초안을 만들고 본문 HWPX(out/proposal.hwpx)와 제출 전 점검 리포트를 낸다."""
+    from .draft.pipeline import run_draft
+
+    profile = load_profile(overrides=profile_override or [])
+    provider = None
+    if llm:
+        from .llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(model=llm_model, share_internal=llm_share_kb)
+    try:
+        res = run_draft(project, profile, kb_dir=kb, provider=provider, share_kb=llm_share_kb,
+                        sections=set(section) if section else None, refresh_storyboard=refresh_storyboard, style_path=style)
+    except FileNotFoundError as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    origins = Counter(d.origin for d in res.drafts)
+    rep = res.check
+    typer.secho(f"\n초안 완료 — {res.project}", bold=True)
+    typer.echo(f"  스토리보드  : {res.storyboard.origin}, win theme {len(res.storyboard.win_themes)}개, "
+               f"자료 요청 {len(res.storyboard.data_requests)}건")
+    typer.echo(f"  절 초안     : {len(res.drafts)}개 (" + ", ".join(f"{k} {v}" for k, v in origins.items()) + ")")
+    typer.echo(f"  확인 필요   : {sum(len(d.placeholders) for d in res.drafts)}곳")
+    typer.echo(f"  추정 쪽수   : {rep.stats.get('estimated_pages')}쪽")
+    typer.echo(f"  점검        : blocker {rep.count('blocker')}, major {rep.count('major')}, minor {rep.count('minor')}")
+    if res.llm_usage:
+        u = res.llm_usage
+        typer.echo(f"  LLM         : 호출 {u.get('calls', 0)}회, 입력 {u.get('input_tokens', 0):,} / 캐시 읽기 "
+                   f"{u.get('cache_read_input_tokens', 0):,} / 출력 {u.get('output_tokens', 0):,} 토큰")
+    for n in res.notes:
+        typer.secho(f"  - {n}", fg=typer.colors.YELLOW)
+    typer.echo("\n산출물:")
+    for key in ("proposal", "storyboard_md", "trace_xlsx", "check_md"):
+        typer.echo(f"  {res.outputs[key]}")
+
+
 @app.command("diff")
 def diff_cmd(
     project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)],

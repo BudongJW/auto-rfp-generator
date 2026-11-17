@@ -1,0 +1,249 @@
+"""스토리보드(설계서 7.5절)와 절 초안(7.6절).
+
+두 모드가 있다.
+- 골격(skeleton): LLM 없이 평가 질문·요구사항·필요 근거를 자리표시자와 함께 배치한다. 작성자가 채울 틀이다.
+- LLM: 스토리보드와 절 본문을 생성한다. 회사 수치는 토큰으로만 쓰게 하고 값은 코드가 채운다.
+  KB 설명·과거 문단은 사용자가 허용할 때만(data_class=internal) 보낸다.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Literal
+
+from pydantic import BaseModel
+
+from ..llm import LLMCall, LLMError, LLMGateway
+from ..llm.prompts import SECTION_INSTRUCTION, STORYBOARD_INSTRUCTION, SYSTEM_WRITER
+from ..plan.outline import similarity
+from ..profile import Profile
+from ..schemas.draft import (
+    DataRequest,
+    DraftBlock,
+    RequirementResponse,
+    SectionDraft,
+    SectionPlan,
+    Storyboard,
+    TableSpec,
+)
+from ..schemas.kb import CompanyKB
+from ..schemas.plan import OutlineNode
+from .context import DraftInputs, kb_catalog, leaf_sections, outline_text, relevant_content, rfp_brief, section_text
+from .tokens import apply_tokens
+
+_NEEDS_BY_CANONICAL = {
+    "제안업체일반": ["회사 일반현황(설립·인원·매출)", "유사사업 수행 실적", "보유 인증"],
+    "프로젝트관리": ["투입 인력(PM 등급·경력)", "사업관리 방법론·도구"],
+    "전략및방법론": ["유사사업 수행 실적", "적용 방법론 적용 사례"],
+    "프로젝트지원": ["교육·기술이전 실적", "유지보수 체계"],
+    "상생협력하도급": ["하도급 계획(대상·비율)", "중소기업 참여 계획"],
+}
+
+
+# ---- 스토리보드 -----------------------------------------------------------------------------
+
+
+class SectionPlanOut(BaseModel):
+    section_id: str
+    head_message: str
+    key_points: list[str]
+    needed_facts: list[str]
+
+
+class StoryboardOut(BaseModel):
+    win_themes: list[str]
+    sections: list[SectionPlanOut]
+
+
+def _budget_target(inp: DraftInputs, node: OutlineNode) -> list[int]:
+    return next((ln.target_chars for ln in inp.budget.lines if ln.node_id == node.id), [])
+
+
+def skeleton_storyboard(inp: DraftInputs) -> Storyboard:
+    sb = Storyboard(origin="skeleton")
+    top = sorted((a for a in inp.rfp.evaluation.areas if a.kind == "정성"), key=lambda a: -(a.points or 0))[:3]
+    sb.win_themes = [f"[확인 필요: '{a.name}'({a.points:g}점) 부문의 차별화 메시지]" if a.points is not None
+                     else f"[확인 필요: '{a.name}' 부문의 차별화 메시지]" for a in top]
+    for node in leaf_sections(inp.outline):
+        ch_key = next((c.canonical for c in inp.outline.chapters if c is node or node in c.children), None)
+        sb.sections.append(SectionPlan(
+            section_id=node.id, number=node.number, title=node.title,
+            head_message="", key_points=list(node.checklist[:5]), eval_items=list(node.eval_items),
+            requirements=list(node.requirements), needed_facts=list(_NEEDS_BY_CANONICAL.get(ch_key or "", [])),
+            page_budget=node.page_budget, target_chars=_budget_target(inp, node)))
+    return sb
+
+
+def llm_storyboard(inp: DraftInputs, gateway: LLMGateway, profile: Profile, share_kb: bool) -> Storyboard:
+    spec = profile.value("llm.tasks")["storyboard"]
+    context = rfp_brief(inp) + "\n" + outline_text(inp) + ("\n" + kb_catalog(inp.kb) if share_kb else "")
+    out, _ = gateway.run(LLMCall(task="draft.storyboard", system=SYSTEM_WRITER, context=context,
+                                 instruction=STORYBOARD_INSTRUCTION, schema=StoryboardOut, effort=spec["effort"],
+                                 max_tokens=int(spec["max_tokens"]), data_class="internal" if share_kb else "public"),
+                         StoryboardOut)
+    base = skeleton_storyboard(inp)
+    by_id = {p.section_id: p for p in out.sections}
+    for plan in base.sections:
+        o = by_id.get(plan.section_id)
+        if o is None:
+            continue
+        plan.head_message = o.head_message.strip()
+        plan.key_points = [k.strip() for k in o.key_points if k.strip()] or plan.key_points
+        plan.needed_facts = [n.strip() for n in o.needed_facts if n.strip()] or plan.needed_facts
+    base.win_themes = [w.strip() for w in out.win_themes if w.strip()][:5] or base.win_themes
+    base.origin = "llm"
+    return base
+
+
+_GENERIC_WORDS = {"유사사업", "유사", "사업", "수행", "실적", "보유", "투입", "인력", "인증", "등급", "경력", "현황",
+                  "등", "및", "의", "관련", "자료", "근거", "건수", "목록"}
+
+
+def _specific_terms(need: str) -> list[str]:
+    words = re.findall(r"[가-힣A-Za-z0-9]+", need)
+    return [w for w in words if w not in _GENERIC_WORDS and len(w) >= 2]
+
+
+def data_requests(sb: Storyboard, kb: CompanyKB) -> list[DataRequest]:
+    """스토리보드가 요구하는 근거 중 KB에서 찾지 못한 것(설계서 7.5절 자료 요청서).
+
+    KB ID로 적힌 근거, KB 설명과 비슷한 근거는 있는 것으로 본다. '실적·인력·인증' 근거는 그 종류의 KB 항목에
+    근거의 고유한 낱말(예: '클라우드 전환 실적'의 '클라우드')이 나와야 있는 것으로 본다.
+    """
+    known_ids = {e.id for coll in (kb.facts, kb.projects, kb.people, kb.certifications, kb.content) for e in coll}
+    labels = [f.label for f in kb.facts] + [k.title for k in kb.content]
+    by_kind = {
+        "실적": " ".join(f"{p.name} {p.client} {' '.join(p.tech)}" for p in kb.projects) if kb.projects else None,
+        "인력": " ".join(f"{h.role} {h.grade} {' '.join(h.skills)} {' '.join(h.certs)}" for h in kb.people) if kb.people else None,
+        "인증": " ".join(c.name for c in kb.certifications) if kb.certifications else None,
+    }
+    out: list[DataRequest] = []
+    for plan in sb.sections:
+        for need in plan.needed_facts:
+            token = need.split()[0].strip("()[],")
+            if token in known_ids:
+                continue
+            if any(similarity(need, label) >= 0.5 for label in labels):
+                continue
+            satisfied = False
+            for kind, corpus in by_kind.items():
+                if kind in need and corpus is not None:
+                    terms = _specific_terms(need)
+                    satisfied = not terms or any(t in corpus for t in terms)
+                    break
+            if satisfied:
+                continue
+            out.append(DataRequest(section_id=plan.section_id, section_title=f"{plan.number} {plan.title}", need=need,
+                                   reason="스토리보드가 요구하지만 KB에 없음"))
+    return out
+
+
+# ---- 절 초안 ---------------------------------------------------------------------------------
+
+
+class BlockOut(BaseModel):
+    kind: Literal["para", "bullets", "table", "callout", "note"]
+    text: str
+    level: int
+    items: list[str]
+    table_header: list[str]
+    table_rows: list[list[str]]
+    req_refs: list[str]
+
+
+class ResponseOut(BaseModel):
+    req_id: str
+    response: str
+    acceptance: Literal["수용", "부분수용", "대안제시", "미정"]
+
+
+class SectionOut(BaseModel):
+    head_message: str
+    blocks: list[BlockOut]
+    responses: list[ResponseOut]
+    missing_info: list[str]
+
+
+def skeleton_section(inp: DraftInputs, node: OutlineNode) -> SectionDraft:
+    plan = inp.storyboard.plan(node.id) if inp.storyboard else None
+    d = SectionDraft(section_id=node.id, number=node.number, title=node.title, origin="skeleton")
+    d.head_message = (plan.head_message if plan and plan.head_message
+                      else "[확인 필요: 이 절의 결론 한 문장(거버닝 메시지)]")
+    for q in node.checklist or (plan.key_points if plan else []):
+        d.blocks.append(DraftBlock(kind="bullets", level=0, items=[q]))
+        d.blocks.append(DraftBlock(kind="bullets", level=1, items=["[확인 필요: 위 평가 질문에 대한 대응 내용]"]))
+    if plan and plan.key_points and node.checklist:
+        d.blocks.append(DraftBlock(kind="bullets", level=0, items=["핵심 내용(스토리보드)"]))
+        d.blocks.append(DraftBlock(kind="bullets", level=1, items=list(plan.key_points)))
+    if plan and plan.needed_facts:
+        d.blocks.append(DraftBlock(kind="note", text="필요 근거: " + ", ".join(plan.needed_facts)))
+    reuse = relevant_content(inp.kb, node)
+    if reuse:
+        d.blocks.append(DraftBlock(kind="note", text="[검토 필요: 재사용 후보 — "
+                                   + "; ".join(f"{k.title}({k.source})" for k in reuse[:3]) + "]"))
+    for rid in node.requirements:
+        r = inp.requirement_index.get(rid)
+        name = r.name if r else rid
+        d.responses.append(RequirementResponse(req_id=rid, response=f"[확인 필요: {name} 대응 방안]", acceptance="미정"))
+    if not d.blocks and not d.responses:
+        d.blocks.append(DraftBlock(kind="para", text="[확인 필요: 본문]"))
+    apply_tokens(d, inp.kb)
+    return d
+
+
+def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile, share_kb: bool) -> SectionDraft:
+    spec = profile.value("llm.tasks")["section"]
+    # 고정 접두부(캐시): RFP 요약(+ KB 카탈로그). 가변부: 이 절의 정보와 작업 지시.
+    context = rfp_brief(inp) + ("\n" + kb_catalog(inp.kb) if share_kb else "")
+    instruction = section_text(inp, node, include_kb_content=share_kb) + "\n\n" + SECTION_INSTRUCTION
+    max_tokens = min(int(spec["max_tokens"]), max(8000, 4000 + 200 * len(node.requirements)))
+    out, reply = gateway.run(LLMCall(task="draft.section", system=SYSTEM_WRITER, context=context, instruction=instruction,
+                                     schema=SectionOut, effort=spec["effort"], max_tokens=max_tokens,
+                                     data_class="internal" if share_kb else "public"), SectionOut)
+    d = SectionDraft(section_id=node.id, number=node.number, title=node.title, origin="llm",
+                     head_message=out.head_message.strip())
+    for b in out.blocks:
+        if b.kind == "table" and b.table_header:
+            width = len(b.table_header)
+            rows = [(r + [""] * width)[:width] for r in b.table_rows]
+            d.blocks.append(DraftBlock(kind="table", table=TableSpec(header=b.table_header, rows=rows), req_refs=b.req_refs))
+        elif b.kind == "bullets":
+            items = [i.lstrip("□○◦-·•※ ").strip() for i in b.items if i.strip()] or ([b.text] if b.text else [])
+            d.blocks.append(DraftBlock(kind="bullets", level=max(0, min(b.level, 3)), items=items, req_refs=b.req_refs))
+        elif b.text.strip():
+            d.blocks.append(DraftBlock(kind=b.kind if b.kind != "table" else "para", text=b.text.strip(), req_refs=b.req_refs))
+    got = {r.req_id: r for r in out.responses}
+    for rid in node.requirements:
+        r = got.get(rid)
+        if r is not None and r.response.strip():
+            d.responses.append(RequirementResponse(req_id=rid, response=r.response.strip(), acceptance=r.acceptance))
+        else:
+            name = inp.requirement_index[rid].name if rid in inp.requirement_index else rid
+            d.responses.append(RequirementResponse(req_id=rid, response=f"[확인 필요: {name} 대응 방안]", acceptance="미정"))
+    for m in out.missing_info:
+        if m.strip() and f"[확인 필요: {m.strip()}]" not in d.all_text():
+            d.blocks.append(DraftBlock(kind="note", text=f"[확인 필요: {m.strip()}]"))
+    if reply.request_id:
+        d.llm_call_ids.append(reply.request_id)
+    apply_tokens(d, inp.kb)
+    return d
+
+
+def write_sections(inp: DraftInputs, gateway: LLMGateway | None, profile: Profile, share_kb: bool,
+                   only: set[str] | None, errors: list[str]) -> list[SectionDraft]:
+    """배점이 큰 절부터 쓴다(예산이 다하면 고배점 절이 먼저 완성되도록)."""
+    nodes = [n for n in leaf_sections(inp.outline) if only is None or n.id in only]
+    order = sorted(nodes, key=lambda n: -n.points)
+    drafts: dict[str, SectionDraft] = {}
+    for node in order:
+        if gateway is None:
+            drafts[node.id] = skeleton_section(inp, node)
+            continue
+        try:
+            drafts[node.id] = llm_section(inp, node, gateway, profile, share_kb)
+        except LLMError as exc:
+            errors.append(f"{node.number} {node.title}: {exc}")
+            drafts[node.id] = skeleton_section(inp, node)
+            if "인증" in str(exc) or "모델을 정하지 못했" in str(exc):
+                gateway = None  # 남은 절은 골격으로
+    return [drafts[n.id] for n in nodes]

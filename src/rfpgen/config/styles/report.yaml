@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: CC0-1.0
+# 기술제안서 본문(HWPX, A4 세로) 보고서체 스타일 — 설계서 10.2절. 이 파일은 생성 문서에 그대로 반영되므로
+# 코드(GPL-3.0)와 분리해 CC0로 둔다(16장 Q5). 조직 스타일은 같은 형식의 YAML로 덮어쓴다(--style).
+#
+# render_path: server  → 라이선스 안전 글꼴(OFL)을 이름으로 지정(서버 렌더·배포 안전)
+#              hancom  → 사용자의 한글에서 PDF로 저장하는 경로: 정부 보고서체 글꼴 이름만 참조(파일은 배포하지 않음)
+render_path: server
+
+page:
+  size: A4
+  orientation: portrait
+  margin_mm: {top: 20, bottom: 15, left: 20, right: 20, header: 10, footer: 10}
+
+fonts:
+  server:  {heading: Noto Sans KR, body: Noto Serif KR, table: Noto Sans KR}
+  hancom:  {heading: HY헤드라인M, body: 휴먼명조, table: 한컴돋움}
+
+# 글자 크기(pt). RFP 최소 글자 크기가 더 크면 그 값으로 올린다.
+size:
+  title: 22
+  chapter: 18
+  section: 16
+  message: 14
+  body: 13
+  note: 11
+  table: 10.5
+line_spacing_pct: {body: 160, table: 130}
+
+# 개조식 단계: 기호, 왼쪽 여백(pt). 내어쓰기 폭은 글자 크기에서 계산한다.
+bullets:
+  - {symbol: "□", left: 0}
+  - {symbol: "○", left: 15}
+  - {symbol: "-", left: 30}
+  - {symbol: "·", left: 41}
+note: {symbol: "※", left: 15}
+
+colors:
+  message_fill: "#E8F1FA"     # 거버닝 메시지 상자
+  table_header_fill: "#D9D9D9"
+  chapter_fill: "#DCE6F1"
+
+header: "{title}"             # 블라인드면 사업명만(업체명 금지)
+footer_page_number: {prefix: "- ", suffix: " -"}

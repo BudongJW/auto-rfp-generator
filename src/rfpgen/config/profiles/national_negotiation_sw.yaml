@@ -169,6 +169,8 @@ llm:
       guideline: {effort: medium, max_tokens: 16000, runs: 1}
       compliance: {effort: high, max_tokens: 32000, runs: 2}
       text_requirements: {effort: high, max_tokens: 32000, runs: 2}
+      storyboard: {effort: high, max_tokens: 32000, runs: 1}
+      section: {effort: high, max_tokens: 32000, runs: 1}
     status: user
     ref: "설계서 8.4절 시작값. runs=2는 같은 입력을 두 번 돌려 결과가 흔들리는 항목을 표시한다(Yu et al. 2026)"
   excerpt_max_chars:

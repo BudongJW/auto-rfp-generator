@@ -121,3 +121,22 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
 
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
+
+
+def write_trace_workbook(path: Path, outline: Outline, trace: Trace, data_requests: list | None = None) -> None:
+    """초안 단계의 추적표(제안 요약·수용 여부·상태가 채워진 것)와 자료 요청서."""
+    wb = Workbook()
+    wb.remove(wb.active)
+    titles = {n.id: f"{n.number} {n.title}" for n in outline.walk()}
+    _sheet(wb, "추적표", TRACE_COLUMNS, [
+        [r.req_id, r.req_name, r.category, r.eval_item or "", r.summary, r.acceptance,
+         ", ".join(str(p) for p in r.pages), _loc_text(r.rfp_locators),
+         "\n".join(titles.get(s, s) for s in r.sections), r.mapping_reason, r.status]
+        for r in trace.rows
+    ], [16, 32, 16, 20, 40, 10, 10, 22, 28, 36, 10])
+    if data_requests is not None:
+        _sheet(wb, "자료 요청서", ["절", "필요한 근거", "사유", "담당자", "기한"], [
+            [d.section_title, d.need, d.reason, d.owner, d.due] for d in data_requests
+        ], [30, 50, 30, 12, 12])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)

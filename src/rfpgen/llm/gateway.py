@@ -14,7 +14,9 @@ from pydantic import BaseModel, ValidationError
 from .schema import strict_schema
 
 T = TypeVar("T", bound=BaseModel)
-DataClass = Literal["public", "confidential", "personal"]
+# public: 공개 RFP / internal: KB 설명·ID·과거 제안서 문단(값 제외, --llm-share-kb로 허용)
+# confidential: KB 값·단가·미공개 전략(현재 어떤 공급자에도 보내지 않음) / personal: 개인정보(보내지 않음)
+DataClass = Literal["public", "internal", "confidential", "personal"]
 
 
 @dataclass
