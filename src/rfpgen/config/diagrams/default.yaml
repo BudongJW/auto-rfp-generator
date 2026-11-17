@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: CC0-1.0
+# 도식 기본 템플릿 — 설계서 7.9절 '도식'. 이 내용은 생성 제안서에 그대로 들어가므로 코드(GPL-3.0)와 분리해
+# CC0로 둔다(16장 Q5). 조직 템플릿은 같은 형식의 YAML로 덮어쓴다.
+#
+# 사업 유형은 사업명으로 고른다(match). 단계 비율(start, end)은 사업기간에 대한 비율이고 반 달 단위로 맞춘다.
+
+# 절 제목(없으면 평가항목 이름)에 맞춰 넣을 도식 — 종류마다 max개까지
+assign:
+  - {kind: gantt,  max: 1, match: "일정|스케줄"}
+  - {kind: org,    max: 2, match: "조직|인력\\s*(?:구성|운영|투입)|투입\\s*인력|수행\\s*인력|추진\\s*체계|수행\\s*체계|협업\\s*체계|보고\\s*체계"}
+  - {kind: layers, max: 1, match: "시스템\\s*구성|아키텍처|구성도|목표\\s*시스템|시스템\\s*구조"}
+  - {kind: wbs,    max: 1, match: "WBS|작업\\s*분할|업무\\s*분할|사업\\s*범위|업무\\s*범위"}
+  - {kind: flow,   max: 1, match: "방법론|추진\\s*절차|수행\\s*절차|개발\\s*절차|추진\\s*방안|수행\\s*방안|추진\\s*전략"}
+# 맞는 절이 없을 때 넣을 장(canonical)의 첫 절
+fallback:
+  gantt: 프로젝트관리
+  org: 프로젝트관리
+  layers: 기술및기능
+
+project_types:
+  - key: maintenance
+    match: "유지\\s*관리|유지\\s*보수|운영\\s*(?:지원|관리|용역)"
+    phases:
+      - {label: 착수 및 인수인계, start: 0.0, end: 0.1, outputs: [사업수행계획서, 인수인계서]}
+      - {label: 운영·유지관리, start: 0.08, end: 0.95, outputs: [월간 운영보고서, 장애 처리 결과서]}
+      - {label: 개선·고도화, start: 0.15, end: 0.9, outputs: [변경 요청·처리 대장]}
+      - {label: 종료 및 인계, start: 0.92, end: 1.0, outputs: [완료보고서, 인계 자료]}
+    support: {label: 사업관리·품질보증, start: 0.0, end: 1.0}
+    milestones: [{label: 착수보고, at: 0.0}, {label: 중간보고, at: 0.5}, {label: 완료보고, at: 1.0}]
+    activities:
+      착수 및 인수인계: [현행 시스템 파악, 운영 체계 수립]
+      운영·유지관리: [정기 점검, 장애 대응, 사용자 지원]
+      개선·고도화: [변경 요청 분석, 기능 개선]
+      종료 및 인계: [운영 산출물 정리, 인수인계]
+  - key: consulting
+    match: "ISP|ISMP|BPR|컨설팅|정보화\\s*전략|마스터\\s*플랜"
+    phases:
+      - {label: 착수, start: 0.0, end: 0.08, outputs: [착수계, 수행계획서]}
+      - {label: 환경 분석, start: 0.05, end: 0.3, outputs: [환경 분석서]}
+      - {label: 현황 분석, start: 0.2, end: 0.45, outputs: [현황 분석서, 요구사항 정의서]}
+      - {label: 목표 모델 설계, start: 0.42, end: 0.75, outputs: [목표 모델 정의서]}
+      - {label: 이행 계획 수립, start: 0.72, end: 1.0, outputs: [이행 계획서, 최종 보고서]}
+    support: {label: 사업관리·품질보증, start: 0.0, end: 1.0}
+    milestones: [{label: 착수보고, at: 0.0}, {label: 중간보고, at: 0.5}, {label: 완료보고, at: 1.0}]
+    activities:
+      착수: [수행 체계 수립, 착수보고]
+      환경 분석: [정책·제도 분석, 기술 동향 분석]
+      현황 분석: [업무 현황 분석, 시스템 현황 분석]
+      목표 모델 설계: [업무 목표 모델, 시스템 목표 모델]
+      이행 계획 수립: [이행 과제 정의, 소요 예산 산정]
+  - key: build                     # 기본: SW 구축·고도화
+    match: ""
+    phases:
+      - {label: 착수 및 계획, start: 0.0, end: 0.08, outputs: [사업수행계획서, 방법론 테일러링 결과서]}
+      - {label: 분석, start: 0.05, end: 0.25, outputs: [요구사항 정의서, 현행 시스템 분석서]}
+      - {label: 설계, start: 0.2, end: 0.42, outputs: [아키텍처 설계서, 화면·DB 설계서]}
+      - {label: 구현, start: 0.38, end: 0.75, outputs: [프로그램 소스, 단위시험 결과서]}
+      - {label: 시험, start: 0.7, end: 0.88, outputs: [통합시험 결과서, 성능시험 결과서]}
+      - {label: 이행 및 안정화, start: 0.85, end: 1.0, outputs: [이행 결과서, 교육 결과서]}
+    support: {label: 사업관리·품질보증, start: 0.0, end: 1.0}
+    milestones: [{label: 착수보고, at: 0.0}, {label: 중간보고, at: 0.5}, {label: 완료보고, at: 1.0}]
+    activities:
+      착수 및 계획: [수행 체계 수립, 착수보고]
+      분석: [현행 분석, 요구사항 정의]
+      설계: [아키텍처 설계, 화면·DB 설계]
+      구현: [기능 개발, 단위시험]
+      시험: [통합시험, 성능·보안 점검]
+      이행 및 안정화: [데이터 이행, 사용자 교육, 안정화]
+
+# 조직도: KB 인력이 없을 때 쓸 팀(자리표시자와 함께)
+default_teams: [분석·설계, 개발, 시험·품질, 인프라·이행]
+support_nodes: [품질보증(QA)]

@@ -15,6 +15,8 @@ _LABELS = {
     "period": {"사업기간", "용역기간", "계약기간", "수행기간", "과업기간"},
     "agency": {"발주기관", "수요기관", "발주처", "주관기관", "공고기관"},
 }
+# 값 칸에 머리글이 온 표('발주기관 | 비고')에서 머리글을 값으로 읽지 않는다
+HEADER_WORDS = {"비고", "구분", "내용", "항목", "세부내용", "주요내용", "기타", "해당없음", "-"}
 _LINE = re.compile(r"^[○◦ㅇ\-□•·▪■◎*]?\s*(?:\d+\.\s*)?(사업명|용역명|과업명|사업\s*예산|사업\s*금액|추정\s*가격|배정\s*예산|소요\s*예산|사업비|사업\s*기간|용역\s*기간|계약\s*기간|수행\s*기간|발주\s*기관|수요\s*기관)\s*[:：]?\s*(.+)$")
 _BID_NO = re.compile(r"\b(R\d{2}[A-Z]{2}\d{8})(?:-?(\d{2,3}))?\b|\b(20\d{9})\s*-\s*(\d{2})\b")
 _METHODS = [
@@ -39,8 +41,8 @@ def extract_notice(docs: list[Document], report: ExtractionReport) -> Notice:
 
     def put(field: str, value: str, doc: Document, block, quote: str) -> None:
         value = value.strip(" :：")
-        if not value or field in found or _field_of(value) is not None:
-            return  # 값 칸에 다른 항목명이 온 머리행은 건너뛴다
+        if not value or field in found or _field_of(value) is not None or norm(value) in HEADER_WORDS:
+            return  # 값 칸에 다른 항목명이나 머리글이 온 머리행은 건너뛴다
         if field == "period" and not re.search(r"\d", value):
             return  # 숫자 없는 기간(도형 글자로 숫자가 빠진 경우)은 쓸모가 없다
         if field == "title" and len(norm(value)) < 4:

@@ -139,6 +139,7 @@ def draft_cmd(
     typer.echo(f"  절 초안     : {len(res.drafts)}개 (" + ", ".join(f"{k} {v}" for k, v in origins.items()) + ")")
     typer.echo(f"  확인 필요   : {sum(len(d.placeholders) for d in res.drafts)}곳")
     typer.echo(f"  추정 쪽수   : {rep.stats.get('estimated_pages')}쪽")
+    _echo_figures(res.figures)
     typer.echo(f"  점검        : blocker {rep.count('blocker')}, major {rep.count('major')}, minor {rep.count('minor')}")
     if res.llm_usage:
         u = res.llm_usage
@@ -149,6 +150,39 @@ def draft_cmd(
     typer.echo("\n산출물:")
     for key in ("proposal", "storyboard_md", "trace_xlsx", "check_md"):
         typer.echo(f"  {res.outputs[key]}")
+
+
+def _echo_figures(figs: dict) -> None:
+    if not figs:
+        return
+    done = sum(1 for f in figs.values() if f.png is not None)
+    typer.echo(f"  도식        : {len(figs)}개(그림 변환 {done}개) — " + ", ".join(f.title for f in list(figs.values())[:5]))
+    if done < len(figs):
+        err = next(f.error for f in figs.values() if f.png is None)
+        typer.secho(f"    그림 변환 실패 — 자리표시 상자를 넣었습니다: {err[:120]}", fg=typer.colors.YELLOW)
+
+
+@app.command("figures")
+def figures_cmd(
+    project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(조직도의 인력 역할·등급)")] = None,
+    style: Annotated[Path | None, typer.Option("--style")] = None,
+    profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
+) -> None:
+    """절 초안은 그대로 두고 도식만 다시 만든다(strategy/figures/<id>.json으로 고친 스펙 반영, LLM 호출 없음)."""
+    from .draft.pipeline import refresh_figures
+
+    try:
+        res = refresh_figures(project, load_profile(overrides=profile_override or []), kb_dir=kb, style_path=style)
+    except FileNotFoundError as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.secho(f"\n도식 다시 만듦 — {project / 'out' / 'figures'}", bold=True)
+    for f in res.figures.values():
+        mark = "그림" if f.png is not None else "자리표시"
+        typer.echo(f"  {f.id:18s} {f.title[:24]:24s} {f.width_mm:5.0f}×{f.height_mm:3.0f}mm {mark} ({f.origin})")
+    typer.echo("  고치려면 strategy/figures/<id>.auto.json을 <id>.json으로 복사해 고친 뒤 다시 실행하세요")
+    typer.echo(f"  본문: {res.outputs['proposal']}  점검: {res.outputs['check_md']}")
 
 
 @app.command("slides")

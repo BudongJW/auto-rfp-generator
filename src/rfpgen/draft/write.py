@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from ..diagram.build import plan_figures
 from ..llm import LLMCall, LLMError, LLMGateway
 from ..llm.prompts import SECTION_INSTRUCTION, STORYBOARD_INSTRUCTION, SYSTEM_WRITER
 from ..plan.outline import similarity
@@ -64,13 +65,15 @@ def skeleton_storyboard(inp: DraftInputs) -> Storyboard:
     top = sorted((a for a in inp.rfp.evaluation.areas if a.kind == "정성"), key=lambda a: -(a.points or 0))[:3]
     sb.win_themes = [f"[확인 필요: '{a.name}'({a.points:g}점) 부문의 차별화 메시지]" if a.points is not None
                      else f"[확인 필요: '{a.name}' 부문의 차별화 메시지]" for a in top]
+    figures = plan_figures(inp.outline, inp.rfp)
     for node in leaf_sections(inp.outline):
         ch_key = next((c.canonical for c in inp.outline.chapters if c is node or node in c.children), None)
         sb.sections.append(SectionPlan(
             section_id=node.id, number=node.number, title=node.title,
             head_message="", key_points=list(node.checklist[:5]), eval_items=list(node.eval_items),
             requirements=list(node.requirements), needed_facts=list(_NEEDS_BY_CANONICAL.get(ch_key or "", [])),
-            page_budget=node.page_budget, target_chars=_budget_target(inp, node)))
+            page_budget=node.page_budget, target_chars=_budget_target(inp, node),
+            figures=figures.get(node.id, [])))  # type: ignore[arg-type]
     return sb
 
 

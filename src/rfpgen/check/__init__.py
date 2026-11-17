@@ -18,6 +18,7 @@ from ..schemas.plan import Outline, PageBudget, Trace
 from ..schemas.rfp import Rfp
 
 _DOWNGRADE = {"blocker": "major", "major": "minor", "minor": "minor", "info": "info"}
+_TEXT_H_MM = 247.0      # A4 세로 본문 높이 어림(위 20·아래 15·머리말·꼬리말 제외)
 _DISPARAGE = re.compile(r"타사|경쟁사|[A-Z가-힣]사\s*대비|기존\s*업체의?\s*(?:문제|한계|실패)|타\s*업체")
 _SUPERLATIVE = re.compile(r"최고|최초|유일|완벽|100\s*%\s*(?:보장|만족|달성)|무결점|절대")
 
@@ -30,7 +31,9 @@ def _f(report: CheckReport, rule: str, severity: str, message: str, *, section: 
 
 
 def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, drafts: list[SectionDraft],
-               kb: CompanyKB, profile: Profile, blind: bool, hwpx_path: Path | None, run_id: str) -> CheckReport:
+               kb: CompanyKB, profile: Profile, blind: bool, hwpx_path: Path | None, run_id: str,
+               figures: dict | None = None) -> CheckReport:
+    """figures: 도식 렌더 결과(diagram.FigureResult, id별). 쪽수 추정과 FIG-* 점검에 쓴다."""
     rep = CheckReport(run_id=run_id)
     by_id = {d.section_id: d for d in drafts}
     nodes = {n.id: n for n in outline.walk()}
@@ -72,6 +75,10 @@ def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, 
         tgt = targets.get(d.section_id)
         n_tables = sum(1 for b in d.blocks if b.kind == "table") + (1 if d.responses else 0)
         est = d.est_chars / eff + 0.25 * n_tables + 0.2
+        for b in d.blocks:                                   # 도식: 실제 높이(없으면 쪽의 1/3)
+            if b.kind == "figure" and b.figure is not None:
+                fr = (figures or {}).get(b.figure.id)
+                est += (fr.height_mm * getattr(fr, "scale", 1.0) + 12) / _TEXT_H_MM if fr else 0.35
         est_pages += est
         if tgt and d.origin != "skeleton":
             if d.est_chars < tgt[0]:
@@ -106,7 +113,7 @@ def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, 
     for d in drafts:
         if d.origin == "skeleton":
             continue
-        unsupported = sorted({n for n in numbers(d.all_text()) if re.sub(r"\s+", "", n) not in allowed})
+        unsupported = sorted({n for n in numbers(d.all_text(figures=False)) if re.sub(r"\s+", "", n) not in allowed})
         if unsupported:
             _f(rep, "FACT-002", "major", f"{d.number} {d.title}: 근거(KB·RFP)를 찾지 못한 수치 {', '.join(unsupported[:8])}",
                section=d.section_id, basis="원칙 P2")
@@ -136,6 +143,18 @@ def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, 
                 _f(rep, "BLD-003", "blocker" if blind else "info", f"파일 이름에 회사 식별 표기: {hwpx_path.name}", basis="블라인드 평가")
     elif blind:
         _f(rep, "BLD-001", "major", "KB identity(회사명 등)가 비어 있어 블라인드 점검을 할 수 없습니다", basis="KB")
+
+    # FIG-001·002·003: 도식 렌더·가정·축소
+    for fr in (figures or {}).values():
+        if fr.png is None:
+            _f(rep, "FIG-001", "major",
+               f"도식 '{fr.title}'({fr.id})을 그림으로 바꾸지 못해 자리표시 상자를 넣었습니다 — {fr.error[:120]}",
+               section=fr.section_id, basis="출력 품질")
+        for a in fr.assumptions:
+            _f(rep, "FIG-002", "minor", f"도식 '{fr.title}': {a}", section=fr.section_id, basis="원칙 P2")
+        if getattr(fr, "scale", 1.0) < 0.98:
+            _f(rep, "FIG-003", "major", f"도식 '{fr.title}'이 쪽보다 커서 {fr.scale:.0%}로 줄였습니다 — 그림 속 글자가 "
+               "최소 글자 크기보다 작아질 수 있습니다. 스펙을 나누거나 줄이세요", section=fr.section_id, basis="RFP 작성지침")
 
     # LANG-001·003
     for d in drafts:

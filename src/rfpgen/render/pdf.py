@@ -34,7 +34,31 @@ def converters_available() -> dict[str, bool]:
     return {
         "hwpx": bool(shutil.which("node")) and (sc / "node_modules" / "@rhwp" / "core" / "rhwp.js").exists(),
         "pptx": bool(shutil.which("soffice")),
+        "svg": bool(shutil.which("node")) and (sc / "svg_to_png.mjs").exists(),
     }
+
+
+def svgs_to_png(pairs: list[tuple[Path, Path]], *, dpi: int = 200, font_aliases: list[str] | None = None,
+                timeout: int = 300) -> list[dict]:
+    """도식 SVG 여러 장을 PNG로 바꾼다(Chromium 한 번 실행). 실패하면 RenderError."""
+    if not pairs:
+        return []
+    sc = sidecar_dir()
+    if not converters_available()["svg"]:
+        raise RenderError(f"SVG→PNG 변환기가 없습니다 — Node(18 이상)와 Playwright가 필요합니다({sc})")
+    cmd = ["node", str(sc / "svg_to_png.mjs"), "--dpi", str(dpi)]
+    for alias in font_aliases or []:
+        cmd += ["--font-alias", alias]
+    for src, dst in pairs:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        cmd += [str(src), str(dst)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RenderError(f"SVG→PNG 변환 실패: {exc}") from exc
+    if proc.returncode != 0 or not all(dst.exists() for _, dst in pairs):
+        raise RenderError(f"SVG→PNG 변환 실패: {proc.stderr.strip()[-500:]}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
 def hwpx_to_pdf(src: Path, dst: Path, *, font_aliases: list[str] | None = None, timeout: int = 600) -> dict:
@@ -128,4 +152,5 @@ def clean_pdf(src: Path, dst: Path, *, title: str = "") -> PdfInfo:
 
 
 __all__ = ["PdfInfo", "RenderError", "clean_pdf", "converters_available", "hwpx_to_pdf", "inspect_pdf", "pptx_to_pdf",
+           "svgs_to_png",
            "sidecar_dir"]

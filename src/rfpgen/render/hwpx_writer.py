@@ -20,6 +20,7 @@ from ..schemas.draft import DraftBlock, SectionDraft
 from ..schemas.plan import Outline, OutlineNode
 
 PT = 100            # 1pt = 100 HWPUNIT
+FIG_MAX_H_MM = 220  # 그림 한 장의 최대 높이(캡션·제목 자리를 남긴다)
 MM = 283.465        # 1mm ≈ 283.465 HWPUNIT
 
 
@@ -88,7 +89,9 @@ class ProposalWriter:
             "note": self._run("note", f["body"]),
             "table": self._run("table", f["table"]),
             "table_head": self._run("table", f["table"], bold=True),
+            "caption": self._run("table", f["table"], bold=True),
         }
+        self.figure_no = 0
         para = {
             "title": self._para(align="CENTER", spacing=sp["body"], before_pt=120, after_pt=24),
             "subtitle": self._para(align="CENTER", spacing=sp["body"], after_pt=12),
@@ -97,6 +100,8 @@ class ProposalWriter:
             "body": self._para(spacing=sp["body"], after_pt=3),
             "table": self._para(align="LEFT", spacing=sp["table"]),
             "table_center": self._para(align="CENTER", spacing=sp["table"]),
+            "figure": self._para(align="CENTER", spacing=100, before_pt=6, keep_next=True),
+            "caption": self._para(align="CENTER", spacing=sp["table"], before_pt=2, after_pt=8),
         }
         for i, lv in enumerate(self.style["bullets"]):
             hang = float(self.size["body"]) * 1.25
@@ -155,6 +160,31 @@ class ProposalWriter:
         cell.paragraphs[0].char_pr_id_ref = self.ids.char["message"]
         t.set_cell_shading(0, 0, self.style["colors"]["message_fill"])
 
+    def figure(self, b: DraftBlock, result=None) -> None:
+        """도식 그림(PNG)과 캡션. 그림이 없으면 같은 자리에 자리표시 상자를 넣는다."""
+        spec = b.figure
+        if spec is None:
+            return
+        self.figure_no += 1
+        text_w_mm = self.text_width / MM
+        png = getattr(result, "png", None)
+        if png is not None and Path(png).exists():
+            w_mm = min(float(result.width_mm), text_w_mm)
+            h_mm = float(result.height_mm) * w_mm / float(result.width_mm)
+            if h_mm > FIG_MAX_H_MM:                     # 쪽보다 크면 줄인다(FIG-003)
+                w_mm, h_mm = w_mm * FIG_MAX_H_MM / h_mm, FIG_MAX_H_MM
+            result.scale = w_mm / float(result.width_mm)
+            self.doc.add_picture(Path(png).read_bytes(), "png", width_mm=w_mm, height_mm=h_mm, align="CENTER",
+                                 para_pr_id_ref=self.ids.para["figure"], char_pr_id_ref=self.ids.char["body"])
+        else:
+            t = self.doc.add_table(1, 1, width=self.text_width)
+            cell = t.cell(0, 0)
+            cell.text = f"[도식 자리: {spec.title} — 그림 변환 전. out/figures/{spec.id}.svg 참고]"
+            cell.paragraphs[0].para_pr_id_ref = self.ids.para["table_center"]
+            cell.paragraphs[0].char_pr_id_ref = self.ids.char["table"]
+            t.set_cell_shading(0, 0, self.style["colors"]["table_header_fill"])
+        self.para(f"[그림 {self.figure_no}] {spec.title}", "caption")
+
     def block(self, b: DraftBlock) -> None:
         bullets = self.style["bullets"]
         if b.kind == "bullets":
@@ -194,15 +224,19 @@ def _section_number(node: OutlineNode) -> str:
 
 def render_proposal(path: Path, outline: Outline, drafts: list[SectionDraft], *, title: str, blind: bool,
                     style: dict[str, Any], min_body_pt: float | None = None, min_table_pt: float | None = None,
-                    responses_table: bool = True, requirement_names: dict[str, str] | None = None) -> dict[str, int]:
-    """본문 HWPX를 쓰고 간단한 통계를 돌려준다. 회사 식별 정보는 쓰지 않는다(블라인드 여부와 무관)."""
+                    responses_table: bool = True, requirement_names: dict[str, str] | None = None,
+                    figures: dict | None = None) -> dict[str, int]:
+    """본문 HWPX를 쓰고 간단한 통계를 돌려준다. 회사 식별 정보는 쓰지 않는다(블라인드 여부와 무관).
+
+    figures: 도식 id → 렌더 결과(diagram.FigureResult). 넣을 때 줄인 비율을 결과의 scale에 적는다.
+    """
     w = ProposalWriter(style, min_body_pt=min_body_pt, min_table_pt=min_table_pt)
     names = requirement_names or {}
     by_id = {d.section_id: d for d in drafts}
     # 표지
     w.para(title, "title")
     w.para("기 술 제 안 서", "subtitle", "chapter")
-    stats = {"sections": 0, "paragraphs": 0, "tables": 0}
+    stats = {"sections": 0, "paragraphs": 0, "tables": 0, "figures": 0}
     first_chapter = True
     for ch in outline.chapters:
         nodes = ch.children or [ch]
@@ -221,6 +255,10 @@ def render_proposal(path: Path, outline: Outline, drafts: list[SectionDraft], *,
                 w.message_box(d.head_message)
                 stats["tables"] += 1
             for b in d.blocks:
+                if b.kind == "figure":
+                    w.figure(b, (figures or {}).get(b.figure.id) if b.figure else None)
+                    stats["figures"] += 1
+                    continue
                 w.block(b)
                 stats["tables" if b.kind in ("table", "callout") else "paragraphs"] += 1
             if responses_table and d.responses:

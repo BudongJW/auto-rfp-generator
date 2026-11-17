@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .common import Locator
+from .diagram import DiagramKind, DiagramSpec
 
 
 class SectionPlan(BaseModel):
@@ -22,6 +23,7 @@ class SectionPlan(BaseModel):
     needed_facts: list[str] = Field(default_factory=list)   # KB에 있어야 할 근거(설명)
     page_budget: int = 0
     target_chars: list[int] = Field(default_factory=list)
+    figures: list[DiagramKind] = Field(default_factory=list)  # 넣을 도식 종류(사람이 더하거나 뺀다)
 
 
 class DataRequest(BaseModel):
@@ -46,7 +48,7 @@ class Storyboard(BaseModel):
         return next((s for s in self.sections if s.section_id == section_id), None)
 
 
-BlockKind = Literal["para", "bullets", "table", "callout", "note"]
+BlockKind = Literal["para", "bullets", "table", "callout", "note", "figure"]
 
 
 class TableSpec(BaseModel):
@@ -60,6 +62,7 @@ class DraftBlock(BaseModel):
     level: int = 0                                  # bullets 깊이(□ ○ - ·)
     items: list[str] = Field(default_factory=list)
     table: TableSpec | None = None
+    figure: DiagramSpec | None = None
     req_refs: list[str] = Field(default_factory=list)
     fact_refs: list[str] = Field(default_factory=list)
 
@@ -86,7 +89,8 @@ class SectionDraft(BaseModel):
     rfp_refs: list[Locator] = Field(default_factory=list)
     llm_call_ids: list[str] = Field(default_factory=list)
 
-    def all_text(self) -> str:
+    def all_text(self, figures: bool = True) -> str:
+        """절의 모든 글. figures=False면 도식 속 글을 뺀다(수치 근거 점검·글자 수 추정용)."""
         parts = [self.title, self.head_message]
         for b in self.blocks:
             parts.append(b.text)
@@ -94,6 +98,8 @@ class SectionDraft(BaseModel):
             if b.table:
                 parts.extend(b.table.header)
                 parts.extend(c for row in b.table.rows for c in row)
+            if b.figure and figures:
+                parts.extend(b.figure.labels())
         parts.extend(r.response for r in self.responses)
         return "\n".join(p for p in parts if p)
 

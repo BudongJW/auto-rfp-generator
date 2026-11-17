@@ -38,7 +38,7 @@ def apply_tokens(draft: SectionDraft, kb: CompanyKB) -> None:
         r.response = substitute(r.response, kb, unresolved)
     draft.unresolved_tokens = sorted(set(draft.unresolved_tokens + unresolved))
     draft.placeholders = sorted(set(PLACEHOLDER.findall(draft.all_text())))
-    draft.est_chars = len(re.sub(r"\s+", "", draft.all_text()))
+    draft.est_chars = len(re.sub(r"\s+", "", draft.all_text(figures=False)))  # 도식 면적은 점검에서 따로 센다
 
 
 def numbers(text: str) -> list[str]:

@@ -37,6 +37,8 @@ class SlideSpec:
     summary: str = ""
     notes: str = ""
     kind: str = "content"                                              # cover | agenda | content
+    image: str = ""                                                    # 도식 PNG(있으면 본문 오른쪽에 넣는다)
+    image_title: str = ""
 
 
 # ---- 내용 구성 ------------------------------------------------------------------------------
@@ -63,7 +65,21 @@ def _eval_tag(rfp: Rfp, node: OutlineNode) -> str:
     return "평가: " + ", ".join(names[:2]) if names else ""
 
 
-def section_slide(rfp: Rfp, outline: Outline, node: OutlineNode, d: SectionDraft, plan) -> SlideSpec:
+def _figure(drafts: list[SectionDraft], figure_dir: Path | None) -> tuple[str, str]:
+    """절들의 첫 도식 PNG(경로, 제목). 렌더되지 않았으면 빈 값."""
+    if figure_dir is None:
+        return "", ""
+    for d in drafts:
+        for b in d.blocks:
+            if b.kind == "figure" and b.figure is not None:
+                png = Path(figure_dir) / f"{b.figure.id}.png"
+                if png.exists():
+                    return str(png), b.figure.title
+    return "", ""
+
+
+def section_slide(rfp: Rfp, outline: Outline, node: OutlineNode, d: SectionDraft, plan,
+                  figure_dir: Path | None = None) -> SlideSpec:
     chapter = next((c for c in outline.chapters if c is node or node in c.children), None)
     crumb = f"{chapter.number} {chapter.title}" + (f" > {node.title}" if chapter is not None and chapter is not node else "") \
         if chapter is not None else node.title
@@ -80,10 +96,12 @@ def section_slide(rfp: Rfp, outline: Outline, node: OutlineNode, d: SectionDraft
     first = next((r for r in d.responses if not PLACEHOLDER.search(r.response)), None)
     s.summary = _clean(first.response) if first else (s.side_points[0] if s.side_points else "")
     s.notes = " ".join(x for x in [s.head, *[t for lv, t in s.bullets if lv == 0][:4]] if x)
+    s.image, s.image_title = _figure([d], figure_dir)
     return s
 
 
-def chapter_slide(rfp: Rfp, chapter: OutlineNode, drafts: dict[str, SectionDraft]) -> SlideSpec:
+def chapter_slide(rfp: Rfp, chapter: OutlineNode, drafts: dict[str, SectionDraft],
+                  figure_dir: Path | None = None) -> SlideSpec:
     nodes = chapter.children or [chapter]
     s = SlideSpec(breadcrumb=f"{chapter.number} {chapter.title}",
                   req_ids=[r for n in nodes for r in n.requirements])
@@ -97,11 +115,12 @@ def chapter_slide(rfp: Rfp, chapter: OutlineNode, drafts: dict[str, SectionDraft
         if d.head_message:
             s.bullets.append((1, _clean(d.head_message)))
     s.notes = " ".join(_clean(d.head_message) for _, d in heads if d.head_message)
+    s.image, s.image_title = _figure([d for _, d in heads], figure_dir)
     return s
 
 
 def build_specs(rfp: Rfp, outline: Outline, drafts: list[SectionDraft], storyboard: Storyboard | None, *,
-                title: str, mode: str, max_slides: int | None) -> list[SlideSpec]:
+                title: str, mode: str, max_slides: int | None, figure_dir: Path | None = None) -> list[SlideSpec]:
     by_id = {d.section_id: d for d in drafts}
     specs = [SlideSpec(kind="cover", head=title, notes=f"{title} 제안 발표를 시작하겠습니다.")]
     chapters = [c for c in outline.chapters if any(n.id in by_id for n in (c.children or [c]))]
@@ -114,9 +133,9 @@ def build_specs(rfp: Rfp, outline: Outline, drafts: list[SectionDraft], storyboa
     leaves = [n for c in chapters for n in (c.children or [c]) if n.id in by_id]
     budget = (max_slides or 10**6) - len(specs)
     if mode == "summary" and len(leaves) <= budget:
-        specs += [section_slide(rfp, outline, n, by_id[n.id], plans.get(n.id)) for n in leaves]
+        specs += [section_slide(rfp, outline, n, by_id[n.id], plans.get(n.id), figure_dir) for n in leaves]
     else:
-        specs += [chapter_slide(rfp, c, by_id) for c in chapters][:max(budget, 0)]
+        specs += [chapter_slide(rfp, c, by_id, figure_dir) for c in chapters][:max(budget, 0)]
     return specs
 
 
@@ -215,7 +234,7 @@ class DeckWriter:
                 self._text(slide, x, 14, 20, 6, [(f"+{len(spec.req_ids) - 8}", 8, True, pal["dark"])])
             self._text(slide, 12, 22, W - 24, 15, [(spec.head, self.mode["head_pt"], True, pal["dark"])], anchor=MSO_ANCHOR.MIDDLE)
             self._rect(slide, 12, 37.5, W - 24, 0.8, pal["main"])
-            body_w = (W - 24) * (0.62 if (spec.table or spec.side_points) else 1.0)
+            body_w = (W - 24) * (0.4 if spec.image else 0.62 if (spec.table or spec.side_points) else 1.0)
             lines, used = [], 0
             symbols = ["□", "○", "-"]
             for lv, text in spec.bullets:
@@ -228,7 +247,12 @@ class DeckWriter:
                 self._text(slide, 12, 42, body_w, 135, lines)
             right_x = 12 + body_w + 5
             right_w = W - 12 - right_x
-            if spec.table:
+            if spec.image:
+                bottom = self._picture(slide, spec.image, right_x, 42, right_w, 128)
+                if spec.image_title:
+                    self._text(slide, right_x, bottom + 1, right_w, 6, [(spec.image_title, 9, False, pal["gray"])],
+                               align=PP_ALIGN.CENTER)
+            elif spec.table:
                 header, rows = spec.table
                 s = self.scale
                 n_rows, n_cols = len(rows) + 1, max(len(header), 1)
@@ -256,6 +280,17 @@ class DeckWriter:
             self._text(slide, W - 32, 199, 20, 6, [(str(self.page), 9, False, pal["gray"])], align=PP_ALIGN.RIGHT)
         if spec.notes:
             slide.notes_slide.notes_text_frame.text = spec.notes
+
+    def _picture(self, slide, path: str, x: float, y: float, w: float, h: float) -> float:
+        """그림을 상자(x, y, w, h — 기준 좌표계 mm) 위쪽에 비율을 지켜 놓고, 그림 아래 끝 y를 돌려준다."""
+        from PIL import Image
+
+        with Image.open(path) as im:
+            ratio = im.height / im.width
+        pw, ph = (w, w * ratio) if w * ratio <= h else (h / ratio, h)
+        s = self.scale
+        slide.shapes.add_picture(path, Mm((x + (w - pw) / 2) * s), Mm(y * s), Mm(pw * s), Mm(ph * s))
+        return y + ph
 
     def save(self, path: Path, title: str) -> None:
         self.prs.core_properties.title = title

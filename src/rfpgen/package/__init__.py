@@ -71,8 +71,11 @@ def make_slides(project: Path, profile: Profile, *, style_path: Path | None = No
     pres_max = (g.presentation_page_limit.value if g.presentation_page_limit
                 else int(minutes * 1.2) if minutes else 25)
     out = project / "out"
-    s_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="summary", max_slides=summary_max)
-    p_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="presentation", max_slides=pres_max)
+    fig_dir = project / "out" / "figures"
+    s_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="summary", max_slides=summary_max,
+                          figure_dir=fig_dir)
+    p_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="presentation", max_slides=pres_max,
+                          figure_dir=fig_dir)
     n_s = render_deck(out / "summary.pptx", s_specs, style=style, mode="summary", title=title)
     n_p = render_deck(out / "presentation.pptx", p_specs, style=style, mode="presentation", title=title)
     (out / "script.md").write_text(script_markdown(p_specs, rfp, drafts, minutes=minutes, title=title), encoding="utf-8")

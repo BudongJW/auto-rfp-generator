@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..check import report_markdown, run_checks
+from ..diagram import BuildContext, attach_figures, figure_specs, plan_figures, render_figures, theme_from_style
 from ..kb import load_kb
 from ..llm import LLMError, LLMGateway
 from ..profile import Profile
@@ -18,7 +20,7 @@ from ..schemas.kb import CompanyKB
 from ..schemas.plan import Outline, PageBudget, Trace
 from ..schemas.rfp import Rfp
 from .context import DraftInputs
-from .tokens import PLACEHOLDER
+from .tokens import PLACEHOLDER, apply_tokens
 from .write import data_requests, llm_storyboard, skeleton_storyboard, write_sections
 
 
@@ -31,6 +33,7 @@ class DraftResult:
     outputs: dict[str, Path] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     llm_usage: dict[str, int] = field(default_factory=dict)
+    figures: dict = field(default_factory=dict)          # 도식 id → diagram.FigureResult
 
 
 def _latest(project: Path, pattern: str) -> Path:
@@ -55,6 +58,8 @@ def storyboard_markdown(sb: Storyboard) -> str:
             lines.append("- 필요 근거: " + ", ".join(p.needed_facts))
         if p.requirements:
             lines.append(f"- 요구사항 {len(p.requirements)}건: " + ", ".join(p.requirements[:12]) + (" …" if len(p.requirements) > 12 else ""))
+        if p.figures:
+            lines.append("- 도식: " + ", ".join(p.figures) + " (스펙: `strategy/figures/`)")
         lines.append("")
     if sb.data_requests:
         lines += ["## 자료 요청", ""]
@@ -80,8 +85,13 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
     # 스토리보드(G3): 사람이 고친 파일이 있으면 그대로 쓴다
     sb_path = project / "strategy" / "storyboard.json"
     if sb_path.exists() and not refresh_storyboard:
-        sb = Storyboard.model_validate_json(sb_path.read_text(encoding="utf-8"))
+        raw = sb_path.read_text(encoding="utf-8")
+        sb = Storyboard.model_validate_json(raw)
         notes.append("기존 스토리보드(storyboard.json)를 사용했습니다")
+        if not any("figures" in sec for sec in json.loads(raw).get("sections", [])):   # 도식 기능 전에 만든 스토리보드
+            planned = plan_figures(outline, rfp)
+            for plan in sb.sections:
+                plan.figures = planned.get(plan.section_id, [])  # type: ignore[assignment]
     elif gateway is not None:
         try:
             sb = llm_storyboard(inp, gateway, profile, share_kb)
@@ -102,12 +112,11 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
     errors: list[str] = []
     drafts = write_sections(inp, gateway, profile, share_kb, sections, errors)
     notes += [f"LLM 절 생성 실패 — 골격으로 대신함: {e}" for e in errors]
-    sec_dir = project / "sections"
-    sec_dir.mkdir(parents=True, exist_ok=True)
+    attach_figures(drafts, sb, BuildContext(rfp=rfp, kb=kb, title=title), project)
     for d in drafts:
-        prev = [int(m.group(1)) for p in sec_dir.glob(f"{d.section_id}.v*.json") if (m := re.search(r"\.v(\d+)\.json$", p.name))]
-        d.version = max(prev, default=0) + 1
-        (sec_dir / f"{d.section_id}.v{d.version}.json").write_text(d.model_dump_json(indent=2), encoding="utf-8")
+        apply_tokens(d, kb)                       # 도식 속 [확인 필요]까지 자리표시자로 센다
+    sec_dir = project / "sections"
+    _save_drafts(sec_dir, drafts)
     # 일부 절만 다시 쓴 경우 나머지는 최신 저장본을 쓴다
     if sections is not None:
         have = {d.section_id for d in drafts}
@@ -121,6 +130,32 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
         order = {n.id: i for i, n in enumerate(outline.walk())}
         drafts.sort(key=lambda d: order.get(d.section_id, 10**6))
 
+    report, outputs, figs = _publish(project, inp, profile, drafts, style_path)
+
+    usage = {}
+    if gateway is not None or provider is not None:
+        u = (gateway.usage if gateway is not None else None)
+        if u is not None:
+            usage = {"calls": u.calls, "input_tokens": u.input_tokens, "output_tokens": u.output_tokens,
+                     "cache_read_input_tokens": u.cache_read_input_tokens}
+    outputs.update({"storyboard": sb_path, "storyboard_md": project / "strategy" / "storyboard.md"})
+    return DraftResult(project=project, storyboard=sb, drafts=drafts, check=report, notes=notes, llm_usage=usage,
+                       outputs=outputs, figures=figs)
+
+
+def _save_drafts(sec_dir: Path, drafts: list[SectionDraft]) -> None:
+    sec_dir.mkdir(parents=True, exist_ok=True)
+    for d in drafts:
+        prev = [int(m.group(1)) for p in sec_dir.glob(f"{d.section_id}.v*.json") if (m := re.search(r"\.v(\d+)\.json$", p.name))]
+        d.version = max(prev, default=0) + 1
+        (sec_dir / f"{d.section_id}.v{d.version}.json").write_text(d.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _publish(project: Path, inp: DraftInputs, profile: Profile, drafts: list[SectionDraft],
+             style_path: Path | None) -> tuple[CheckReport, dict[str, Path], dict]:
+    """추적표 갱신 → 도식 렌더 → 본문 HWPX → 추적표 XLSX → 제출 전 점검."""
+    rfp, outline, budget, trace, kb, title, blind = inp.rfp, inp.outline, inp.budget, inp.trace, inp.kb, inp.title, inp.blind
+    sb = inp.storyboard or Storyboard()
     # 추적표 갱신: 대응 방안과 상태
     responses = {r.req_id: r for d in drafts for r in d.responses}
     for row in trace.rows:
@@ -137,28 +172,53 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
     style = load_style(style_path)
     out_path = project / "out" / "proposal.hwpx"
     g = rfp.guideline
+    min_table = g.table_min_font_pt.value if g.table_min_font_pt else None
+    figs = render_figures(figure_specs(drafts), project / "out" / "figures", theme_from_style(style, min_table))
     render_proposal(out_path, outline, drafts, title=title, blind=blind, style=style,
-                    min_body_pt=g.min_font_pt.value if g.min_font_pt else None,
-                    min_table_pt=g.table_min_font_pt.value if g.table_min_font_pt else None,
-                    requirement_names={r.id: r.name for r in rfp.requirements})
+                    min_body_pt=g.min_font_pt.value if g.min_font_pt else None, min_table_pt=min_table,
+                    requirement_names={r.id: r.name for r in rfp.requirements}, figures=figs)
     trace_xlsx = project / "out" / "trace_draft.xlsx"
     write_trace_workbook(trace_xlsx, outline, trace, sb.data_requests)
 
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report = run_checks(rfp=rfp, outline=outline, budget=budget, trace=trace, drafts=drafts, kb=kb, profile=profile,
-                        blind=blind, hwpx_path=out_path, run_id=run_id)
+                        blind=blind, hwpx_path=out_path, run_id=run_id, figures=figs)
     check_dir = project / "checks"
     check_dir.mkdir(parents=True, exist_ok=True)
     (check_dir / f"{run_id}.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
     (check_dir / f"{run_id}.md").write_text(report_markdown(report), encoding="utf-8")
 
-    usage = {}
-    if gateway is not None or provider is not None:
-        u = (gateway.usage if gateway is not None else None)
-        if u is not None:
-            usage = {"calls": u.calls, "input_tokens": u.input_tokens, "output_tokens": u.output_tokens,
-                     "cache_read_input_tokens": u.cache_read_input_tokens}
-    return DraftResult(project=project, storyboard=sb, drafts=drafts, check=report, notes=notes, llm_usage=usage, outputs={
-        "proposal": out_path, "storyboard": sb_path, "storyboard_md": project / "strategy" / "storyboard.md",
-        "trace_xlsx": trace_xlsx, "check_md": check_dir / f"{run_id}.md", "check_json": check_dir / f"{run_id}.json",
-    })
+    return report, {"proposal": out_path, "trace_xlsx": trace_xlsx, "check_md": check_dir / f"{run_id}.md",
+                    "check_json": check_dir / f"{run_id}.json", "figures": project / "out" / "figures"}, figs
+
+
+def refresh_figures(project: Path, profile: Profile, *, kb_dir: Path | None = None,
+                    style_path: Path | None = None) -> DraftResult:
+    """절 초안은 그대로 두고 도식만 다시 만든다(LLM을 부르지 않는다).
+
+    스토리보드의 도식 계획(figures)과 strategy/figures/<id>.json(사람이 고친 스펙)을 반영해 figure 블록을 바꾸고,
+    새 판으로 저장한 뒤 그림·본문 HWPX·점검을 다시 만든다.
+    """
+    from ..package import latest_drafts
+
+    project = Path(project)
+    rfp = Rfp.model_validate_json(_latest(project, "rfp/rfp.v*.json").read_text(encoding="utf-8"))
+    outline = Outline.model_validate_json((project / "plan" / "outline.json").read_text(encoding="utf-8"))
+    budget = PageBudget.model_validate_json((project / "plan" / "budget.json").read_text(encoding="utf-8"))
+    trace = Trace.model_validate_json((project / "plan" / "trace.json").read_text(encoding="utf-8"))
+    sb_path = project / "strategy" / "storyboard.json"
+    if not sb_path.exists():
+        raise FileNotFoundError(f"{project}: 스토리보드가 없습니다 — 먼저 `rfpgen draft`를 실행하세요")
+    sb = Storyboard.model_validate_json(sb_path.read_text(encoding="utf-8"))
+    kb = load_kb(kb_dir) if kb_dir else CompanyKB()
+    title = rfp.notice.title.value if rfp.notice.title else project.name
+    blind = bool(rfp.guideline.blind and rfp.guideline.blind.value)
+    inp = DraftInputs(rfp=rfp, outline=outline, budget=budget, trace=trace, kb=kb, title=title, blind=blind, storyboard=sb)
+    drafts = latest_drafts(project, outline)
+    attach_figures(drafts, sb, BuildContext(rfp=rfp, kb=kb, title=title), project)
+    for d in drafts:
+        apply_tokens(d, kb)
+    _save_drafts(project / "sections", drafts)
+    report, outputs, figs = _publish(project, inp, profile, drafts, style_path)
+    return DraftResult(project=project, storyboard=sb, drafts=drafts, check=report, outputs=outputs, figures=figs,
+                       notes=["절 초안은 그대로 두고 도식만 다시 만들었습니다"])
