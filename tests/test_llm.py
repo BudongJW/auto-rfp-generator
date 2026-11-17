@@ -113,9 +113,11 @@ def test_gateway_validation_policy_and_audit(tmp_path):
         gw.run(LLMCall(task="kb", system="s", context="c", instruction="i", schema=TextRequirementsOut,
                        data_class="confidential"), TextRequirementsOut)
     lines = [json.loads(x) for x in audit.read_text(encoding="utf-8").splitlines()]
-    assert [x["status"] for x in lines] == ["ok", "invalid", "truncated"]
+    # 잘린 호출은 상한을 두 배로 한 번 더 보낸다(두 번째도 잘리면 오류)
+    assert [x["status"] for x in lines] == ["ok", "invalid", "truncated", "truncated"]
+    assert len(gw.retries) == 1 and "다시 요청" in gw.retries[0]
     assert lines[0]["usage"]["input_tokens"] == 7 and "input_sha256_16" in lines[0]
-    assert gw.usage.calls == 3 and gw.usage.input_tokens == 7
+    assert gw.usage.calls == 4 and gw.usage.input_tokens == 7   # 잘린 두 번도 사용량에 든다
 
 
 def test_excerpt_includes_only_keyword_windows(maker):

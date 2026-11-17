@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
@@ -17,6 +17,9 @@ T = TypeVar("T", bound=BaseModel)
 # public: 공개 RFP / internal: KB 설명·ID·과거 제안서 문단(값 제외, --llm-share-kb로 허용)
 # confidential: KB 값·단가·미공개 전략(현재 어떤 공급자에도 보내지 않음) / personal: 개인정보(보내지 않음)
 DataClass = Literal["public", "internal", "confidential", "personal"]
+
+
+MAX_OUTPUT_TOKENS = 128_000      # 현행 Opus 계열 출력 상한(스트리밍으로 받는다)
 
 
 @dataclass
@@ -94,6 +97,7 @@ class LLMGateway:
         self.provider = provider
         self.audit_path = audit_path
         self.usage = Usage()
+        self.retries: list[str] = []          # 잘려서 상한을 늘려 다시 보낸 기록
 
     def _audit(self, record: dict[str, Any]) -> None:
         if self.audit_path is None:
@@ -103,6 +107,17 @@ class LLMGateway:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def run(self, call: LLMCall, schema: type[T]) -> tuple[T, ProviderReply]:
+        """한 번 호출한다. 출력이 max_tokens에서 잘리면(사고 토큰도 상한에 포함) 상한을 두 배(최대 128K)로 한 번 더 보낸다."""
+        try:
+            return self._run_once(call, schema)
+        except LLMTruncated:
+            if call.max_tokens >= MAX_OUTPUT_TOKENS:
+                raise
+            bigger = replace(call, max_tokens=min(call.max_tokens * 2, MAX_OUTPUT_TOKENS))
+            self.retries.append(f"{call.task}: 출력이 {call.max_tokens:,}토큰에서 잘려 {bigger.max_tokens:,}토큰으로 다시 요청")
+            return self._run_once(bigger, schema)
+
+    def _run_once(self, call: LLMCall, schema: type[T]) -> tuple[T, ProviderReply]:
         if call.data_class not in self.provider.allowed_data_classes:
             raise LLMPolicyError(
                 f"{call.task}: '{call.data_class}' 데이터는 공급자 '{self.provider.name}'로 보낼 수 없습니다(설계서 8.3절)")

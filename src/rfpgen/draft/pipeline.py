@@ -112,6 +112,8 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
     errors: list[str] = []
     drafts = write_sections(inp, gateway, profile, share_kb, sections, errors)
     notes += [f"LLM 절 생성 실패 — 골격으로 대신함: {e}" for e in errors]
+    if gateway is not None:
+        notes += gateway.retries                        # 출력이 잘려 상한을 늘려 다시 보낸 호출
     attach_figures(drafts, sb, BuildContext(rfp=rfp, kb=kb, title=title), project)
     for d in drafts:
         apply_tokens(d, kb)                       # 도식 속 [확인 필요]까지 자리표시자로 센다

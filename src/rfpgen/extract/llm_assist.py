@@ -26,7 +26,6 @@ from ..llm import (
     LLMError,
     LLMGateway,
     LLMRefusal,
-    LLMTruncated,
     keyword_excerpt,
     normalize_for_match,
     number_in_quote,
@@ -142,9 +141,6 @@ def _similar(a: str, b: str) -> float:
     return similarity(a, b)
 
 
-MAX_OUTPUT_TOKENS = 128_000      # 현행 Opus 계열 출력 상한(스트리밍으로 받는다)
-
-
 class _Runner:
     def __init__(self, gateway: LLMGateway, docs: list[Document], report: ExtractionReport, profile: Profile) -> None:
         self.gateway = gateway
@@ -158,20 +154,12 @@ class _Runner:
         spec = self.tasks[task]
         results = []
         for _ in range(int(spec.get("runs", 1))):
-            max_tokens = int(spec["max_tokens"])
-            try:
-                data, _reply = self.gateway.run(
-                    LLMCall(task=f"extract.{task}", system=SYSTEM, context=context, instruction=instruction,
-                            schema=schema, effort=spec["effort"], max_tokens=max_tokens), schema)
-            except LLMTruncated:
-                if max_tokens >= MAX_OUTPUT_TOKENS:
-                    raise
-                # 사고 토큰까지 상한에 들어가므로 잘리면 상한을 두 배(최대 128K)로 한 번만 다시 보낸다
-                retry = min(max_tokens * 2, MAX_OUTPUT_TOKENS)
-                self.report.add("LLM-RETRY", "info", f"{task}: 출력이 {max_tokens:,}토큰에서 잘려 {retry:,}토큰으로 다시 요청했습니다")
-                data, _reply = self.gateway.run(
-                    LLMCall(task=f"extract.{task}", system=SYSTEM, context=context, instruction=instruction,
-                            schema=schema, effort=spec["effort"], max_tokens=retry), schema)
+            seen = len(self.gateway.retries)
+            data, _reply = self.gateway.run(
+                LLMCall(task=f"extract.{task}", system=SYSTEM, context=context, instruction=instruction,
+                        schema=schema, effort=spec["effort"], max_tokens=int(spec["max_tokens"])), schema)
+            for msg in self.gateway.retries[seen:]:          # 게이트웨이가 잘림 뒤 상한을 늘려 다시 보냈다
+                self.report.add("LLM-RETRY", "info", msg)
             results.append(data)
         return results
 

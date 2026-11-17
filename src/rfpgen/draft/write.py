@@ -199,7 +199,8 @@ def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profil
     # 고정 접두부(캐시): RFP 요약(+ KB 카탈로그). 가변부: 이 절의 정보와 작업 지시.
     context = rfp_brief(inp) + ("\n" + kb_catalog(inp.kb) if share_kb else "")
     instruction = section_text(inp, node, include_kb_content=share_kb) + "\n\n" + SECTION_INSTRUCTION
-    max_tokens = min(int(spec["max_tokens"]), max(8000, 4000 + 200 * len(node.requirements)))
+    # 사고 토큰도 상한에 들어간다: 요구사항 수로 줄이면 잘린다(2026-11-17 실측, 8K에서 3절 중 2절 잘림)
+    max_tokens = int(spec["max_tokens"])
     out, reply = gateway.run(LLMCall(task="draft.section", system=SYSTEM_WRITER, context=context, instruction=instruction,
                                      schema=SectionOut, effort=spec["effort"], max_tokens=max_tokens,
                                      data_class="internal" if share_kb else "public"), SectionOut)
