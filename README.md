@@ -6,7 +6,7 @@
 - 조사 보고서: [reports/](reports/)
 - 외부 코드 분석: [docs/analysis/](docs/analysis/)
 
-## 현재 단계: M1 RFP 분석기 + M2 본문 초안(1차)
+## 현재 단계: M1 RFP 분석기 + M2 본문 초안(1차) + M3 장표·PDF·제출 패키지(1차)
 
 RFP와 공고 첨부를 넣으면 다음을 만듭니다. 모든 추출값에는 원문 위치(문서·블록·쪽)가 붙습니다.
 
@@ -79,6 +79,32 @@ uv run rfpgen draft projects/my-bid --kb kb --llm
 - KB의 ID·설명·재사용 문단까지 보내려면 `--llm-share-kb`를 줍니다(기본은 공개 RFP만).
 - `strategy/storyboard.json`을 고친 뒤 다시 실행하면 고친 내용으로 씁니다. `--section S-3-1`로 일부 절만 다시 쓸 수 있습니다.
 
+### 장표·PDF·제출 패키지(M3)
+
+```bash
+uv run rfpgen slides projects/my-bid
+```
+
+```bash
+uv run rfpgen package projects/my-bid --kb kb
+```
+
+- `slides`: 최신 절 초안으로 `out/summary.pptx`(요약본, A4 가로), `out/presentation.pptx`(발표자료, 16:9), `out/script.md`(발표 대본·예상 질문)를 만듭니다. 대본은 발표자 노트에도 들어갑니다.
+- `package`: HWPX·PPTX를 PDF로 바꾸고 작성자 등 파일 정보를 지워 `submission/`에 `01_정성제안서.pdf`, `02_제안요약서.pdf`, `03_발표자료.pdf`와 `제출전점검표.md`를 만듭니다. 실제 렌더 쪽수·총 용량·글꼴 임베딩·파일 정보의 회사 식별 표기를 점검합니다. 나라장터 업로드는 사람이 합니다.
+
+PDF 변환에는 다음이 필요합니다(한 번만).
+
+```bash
+cd sidecars/node && npm install
+```
+
+```bash
+sudo apt-get install -y libreoffice-impress fonts-noto-cjk
+```
+
+- HWPX → PDF는 Node(18 이상)와 Playwright Chromium, `@rhwp/core`(MIT)를 씁니다. PPTX → PDF는 LibreOffice를 씁니다.
+- 서버 렌더는 한글 화면과 다를 수 있습니다. 최종본은 PDF를 쪽마다 열어 확인하세요.
+
 ```bash
 uv run rfpgen parse 제안요청서.pdf
 ```
@@ -100,7 +126,8 @@ uv run pytest
 ## 알려진 한계
 
 - **LLM 보조 추출과 LLM 초안 생성은 아직 실제 API로 품질·비용을 재지 않았습니다.** 가짜 공급자로 검증 규칙과 요청 형태만 테스트했습니다.
-- **쪽수는 글자 수로 추정합니다.** 실제 쪽수는 M3의 PDF 렌더 뒤에 확정합니다. 생성한 HWPX는 한글에서 열어 모양을 확인해 주세요.
+- **쪽수:** `draft`의 쪽수는 글자 수 추정이고, `package`가 렌더한 PDF로 확정합니다. 서버 렌더(rhwp)는 한글과 쪽 나눔이 다를 수 있으니 HWPX를 한글에서도 열어 확인해 주세요.
+- **M3에서 아직 없는 것:** 별지 서식 채우기, 도식(조직도·추진체계도) 자동 렌더, LLM 대본, 회사 PPTX 템플릿 적용.
 - **스캔 PDF는 아직 읽지 못합니다.** 숫자가 도형으로 그려진 PDF도 마찬가지입니다. 대신 해당 문장을 찾아 "숫자를 읽지 못함"으로 보고합니다.
 - **배포용·암호 HWP는 열지 않습니다.** 한글에서 PDF로 저장해 올려 주세요.
 - **상세화 등급(S~D)은 휴리스틱 추정입니다.**

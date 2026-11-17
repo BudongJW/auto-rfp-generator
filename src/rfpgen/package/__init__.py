@@ -1,0 +1,241 @@
+"""장표 생성(derive)과 제출 패키지(package) — 설계서 7.7절, 7.10절, M3.
+
+slides : 최신 절 초안·스토리보드 → out/summary.pptx(요약본, A4 가로), out/presentation.pptx(발표자료, 16:9), out/script.md
+package: HWPX·PPTX → PDF → 메타데이터 정리 → submission/(문서구분별, 회사명 없는 파일명) + 정확한 쪽수·용량·글꼴 점검
+         + 제출 전 점검표. 나라장터 업로드는 사람이 한다.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ..check import report_markdown
+from ..kb import load_kb
+from ..profile import Profile
+from ..render.hwpx_writer import load_style
+from ..render.pdf import RenderError, clean_pdf, converters_available, hwpx_to_pdf, inspect_pdf, pptx_to_pdf
+from ..render.slides import build_specs, render_deck, script_markdown
+from ..schemas.draft import CheckFinding, CheckReport, SectionDraft, Storyboard
+from ..schemas.kb import CompanyKB
+from ..schemas.plan import Outline
+from ..schemas.rfp import Rfp
+
+_DOWNGRADE = {"blocker": "major", "major": "minor", "minor": "minor", "info": "info"}
+
+
+def _latest_rfp(project: Path) -> Rfp:
+    found = sorted(project.glob("rfp/rfp.v*.json"), key=lambda p: int(re.search(r"v(\d+)", p.name).group(1)))  # type: ignore[union-attr]
+    if not found:
+        raise FileNotFoundError(f"{project}: rfp.json이 없습니다 — 먼저 `rfpgen analyze`를 실행하세요")
+    return Rfp.model_validate_json(found[-1].read_text(encoding="utf-8"))
+
+
+def latest_drafts(project: Path, outline: Outline) -> list[SectionDraft]:
+    latest: dict[str, tuple[int, Path]] = {}
+    for p in (project / "sections").glob("*.v*.json"):
+        m = re.match(r"(.+)\.v(\d+)\.json$", p.name)
+        if m and (m.group(1) not in latest or int(m.group(2)) > latest[m.group(1)][0]):
+            latest[m.group(1)] = (int(m.group(2)), p)
+    if not latest:
+        raise FileNotFoundError(f"{project}: 절 초안이 없습니다 — 먼저 `rfpgen draft`를 실행하세요")
+    order = {n.id: i for i, n in enumerate(outline.walk())}
+    drafts = [SectionDraft.model_validate_json(p.read_text(encoding="utf-8")) for _, p in latest.values()]
+    return sorted(drafts, key=lambda d: order.get(d.section_id, 10**6))
+
+
+@dataclass
+class SlidesResult:
+    summary: Path
+    presentation: Path
+    script: Path
+    summary_slides: int
+    presentation_slides: int
+
+
+def make_slides(project: Path, profile: Profile, *, style_path: Path | None = None) -> SlidesResult:
+    rfp = _latest_rfp(project)
+    outline = Outline.model_validate_json((project / "plan" / "outline.json").read_text(encoding="utf-8"))
+    sb_path = project / "strategy" / "storyboard.json"
+    storyboard = Storyboard.model_validate_json(sb_path.read_text(encoding="utf-8")) if sb_path.exists() else None
+    drafts = latest_drafts(project, outline)
+    title = rfp.notice.title.value if rfp.notice.title else project.name
+    style = load_style(style_path)
+    g = rfp.guideline
+    summary_max = g.summary_page_limit.value if g.summary_page_limit else int(profile.value("page_limits.summary_pages"))
+    minutes = g.presentation.value.minutes if g.presentation and g.presentation.value.minutes else None
+    pres_max = (g.presentation_page_limit.value if g.presentation_page_limit
+                else int(minutes * 1.2) if minutes else 25)
+    out = project / "out"
+    s_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="summary", max_slides=summary_max)
+    p_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="presentation", max_slides=pres_max)
+    n_s = render_deck(out / "summary.pptx", s_specs, style=style, mode="summary", title=title)
+    n_p = render_deck(out / "presentation.pptx", p_specs, style=style, mode="presentation", title=title)
+    (out / "script.md").write_text(script_markdown(p_specs, rfp, drafts, minutes=minutes, title=title), encoding="utf-8")
+    return SlidesResult(out / "summary.pptx", out / "presentation.pptx", out / "script.md", n_s, n_p)
+
+
+@dataclass
+class PackagedDoc:
+    doc_type: str
+    source: Path
+    pdf: Path
+    pages: int
+    size_bytes: int
+    fonts: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class PackageResult:
+    docs: list[PackagedDoc]
+    check: CheckReport
+    checklist: Path
+    notes: list[str] = field(default_factory=list)
+
+
+def _f(rep: CheckReport, rule: str, severity: str, message: str, *, basis: str = "", provisional: bool = False) -> None:
+    rep.findings.append(CheckFinding(rule=rule, severity=_DOWNGRADE[severity] if provisional else severity,  # type: ignore[arg-type]
+                                     message=message, basis=basis, provisional=provisional))
+
+
+def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None) -> PackageResult:
+    project = Path(project)
+    rfp = _latest_rfp(project)
+    title = rfp.notice.title.value if rfp.notice.title else project.name
+    g = rfp.guideline
+    blind = bool(g.blind and g.blind.value)
+    kb = load_kb(kb_dir) if kb_dir else CompanyKB()
+    sources = [("정성제안서", project / "out" / "proposal.hwpx"), ("제안요약서", project / "out" / "summary.pptx"),
+               ("발표자료", project / "out" / "presentation.pptx")]
+    avail = converters_available()
+    sub = project / "submission"
+    raw_pdf = project / "out" / "pdf"
+    sub.mkdir(parents=True, exist_ok=True)
+    for old in sub.glob("*.pdf"):
+        old.unlink()
+    docs: list[PackagedDoc] = []
+    notes: list[str] = []
+    run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    rep = CheckReport(run_id=f"package-{run_id}")
+    for i, (doc_type, src) in enumerate(sources, start=1):
+        if not src.exists():
+            continue
+        raw = raw_pdf / f"{src.stem}.pdf"
+        try:
+            if src.suffix == ".hwpx":
+                hwpx_to_pdf(src, raw)
+            else:
+                pptx_to_pdf(src, raw)
+        except RenderError as exc:
+            notes.append(f"{doc_type}: {exc}")
+            _f(rep, "SUB-002", "blocker", f"{doc_type} PDF를 만들지 못했습니다 — {exc}", basis="제출 형식")
+            continue
+        dst = sub / f"{i:02d}_{doc_type}.pdf"   # 파일 이름에 회사명을 넣지 않는다
+        info = clean_pdf(raw, dst, title=f"{title} {doc_type}")
+        docs.append(PackagedDoc(doc_type, src, dst, info.pages, info.size_bytes, info.fonts))
+    del avail
+
+    by_type = {d.doc_type: d for d in docs}
+    # SUB-002: 필수 문서구분
+    needed = ["정성제안서"]
+    if g.summary_page_limit is not None:
+        needed.append("제안요약서")
+    if g.presentation is not None or g.presentation_page_limit is not None:
+        needed.append("발표자료")
+    for t in needed:
+        if t not in by_type:
+            _f(rep, "SUB-002", "blocker", f"필수 제출 문서 '{t}'가 없습니다", basis="RFP 작성지침")
+    _f(rep, "SUB-002", "info", "정량제안서·하도급 계획서·별지 서식은 이 패키지에 없습니다 — 공고 서식으로 따로 준비해 함께 올리세요",
+       basis="나라장터 문서구분")
+
+    # PAGE-001·002: 정확한 쪽수
+    excluded = set(g.count_exclusions.value) if g.count_exclusions else set(profile.value("page_limits.exclude_from_count"))
+    main = by_type.get("정성제안서")
+    if main is not None:
+        counted = main.pages - (1 if "표지" in excluded else 0)
+        if g.main_page_limit is not None:
+            limit, prov, basis = g.main_page_limit.value, False, "RFP 작성지침"
+        else:
+            pv = profile.get("page_limits.main_pages")
+            limit, prov, basis = int(pv.value), pv.status != "verified", f"프로필 기본값({pv.status})"
+        rep.stats["main_pages"] = counted
+        if counted > limit:
+            _f(rep, "PAGE-001", "blocker", f"정성제안서 {counted}쪽(표지 제외) — 상한 {limit}쪽 초과", basis=basis, provisional=prov)
+    for t, ex in (("제안요약서", g.summary_page_limit), ("발표자료", g.presentation_page_limit)):
+        d = by_type.get(t)
+        if d is not None and ex is not None and d.pages > ex.value:
+            _f(rep, "PAGE-002", "blocker", f"{t} {d.pages}쪽 — 상한 {ex.value}쪽 초과", basis="RFP 작성지침")
+
+    # SUB-001: 형식·용량
+    total = sum(d.size_bytes for d in docs)
+    rep.stats["total_mb"] = round(total / 1024 / 1024, 2)
+    if g.total_size_limit_mb is not None:
+        lim_mb, prov, basis = g.total_size_limit_mb.value, False, "RFP 작성지침"
+    else:
+        pv = profile.get("submission.total_size_limit_mb")
+        lim_mb, prov, basis = int(pv.value), pv.status != "verified", f"프로필 기본값({pv.status})"
+    if total > lim_mb * 1024 * 1024:
+        _f(rep, "SUB-001", "blocker", f"제출 파일 총 {total / 1024 / 1024:.1f}MB — 상한 {lim_mb}MB 초과", basis=basis,
+           provisional=prov)
+
+    # FMT-003: 글꼴 임베딩
+    for d in docs:
+        missing = [n for n, s in d.fonts.items() if s == "not-embedded"]
+        if missing:
+            _f(rep, "FMT-003", "major", f"{d.doc_type}: 임베딩되지 않은 글꼴 {', '.join(missing[:5])}", basis="스타일 정책")
+
+    # BLD-003: 파일 정보·파일 이름
+    terms = kb.identity.terms()
+    for d in docs:
+        meta = " ".join(inspect_pdf(d.pdf).metadata.values()).lower()
+        hits = [t for t in terms if t.lower() in meta or t.lower() in d.pdf.name.lower()]
+        if hits:
+            _f(rep, "BLD-003", "blocker" if blind else "info", f"{d.doc_type}: 파일 정보·이름에 회사 식별 표기 {', '.join(hits)}",
+               basis="블라인드 평가")
+
+    # 초안 단계 점검을 이어 붙인다(쪽수 추정은 위의 정확한 쪽수로 대체)
+    checks = sorted((project / "checks").glob("2*.json"))
+    if checks:
+        prev = CheckReport.model_validate_json(checks[-1].read_text(encoding="utf-8"))
+        for f in prev.findings:
+            if f.rule != "PAGE-001":
+                rep.findings.append(f)
+    rep.stats.update({"blocker": rep.count("blocker"), "major": rep.count("major"), "minor": rep.count("minor")})
+    check_dir = project / "checks"
+    check_dir.mkdir(exist_ok=True)
+    (check_dir / f"{rep.run_id}.json").write_text(rep.model_dump_json(indent=2), encoding="utf-8")
+    (check_dir / f"{rep.run_id}.md").write_text(report_markdown(rep), encoding="utf-8")
+
+    checklist = sub / "제출전점검표.md"
+    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind), encoding="utf-8")
+    (sub / "manifest.json").write_text(json.dumps([
+        {"doc_type": d.doc_type, "file": d.pdf.name, "pages": d.pages, "bytes": d.size_bytes, "source": str(d.source.name)}
+        for d in docs], ensure_ascii=False, indent=2), encoding="utf-8")
+    return PackageResult(docs=docs, check=rep, checklist=checklist, notes=notes)
+
+
+def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: int, blind: bool) -> str:
+    total = sum(d.size_bytes for d in docs)
+    lines = [f"# 제출 전 점검표 — {title}", "", f"점검 실행: {rep.run_id}", "",
+             "| 문서구분(나라장터) | 파일 | 쪽수 | 용량 |", "|---|---|---|---|"]
+    for d in docs:
+        lines.append(f"| {d.doc_type} | {d.pdf.name} | {d.pages} | {d.size_bytes / 1024 / 1024:.2f}MB |")
+    lines += ["", f"- 총 용량: {total / 1024 / 1024:.2f}MB / 상한 {lim_mb}MB",
+              f"- 점검: blocker {rep.count('blocker')}, major {rep.count('major')}, minor {rep.count('minor')} "
+              f"(상세: `checks/{rep.run_id}.md`)",
+              f"- 블라인드 평가: {'예 — 본문·파일 정보·파일 이름에 회사 식별 표기가 없어야 합니다' if blind else '아니오'}", "",
+              "## 업로드 전 확인(사람)", "",
+              "- [ ] blocker 0건을 확인했다(G5)",
+              "- [ ] 나라장터 제출 화면에서 파일마다 문서구분(정성제안서·제안요약서·발표자료·정량제안서·하도급 계획서·기타)을 맞게 지정했다",
+              "- [ ] 정량제안서·별지 서식·하도급 계획서를 공고 양식으로 따로 준비해 함께 올렸다",
+              "- [ ] 가격입찰서를 따로 제출했다(제안서나 가격입찰서 중 하나라도 빠지면 입찰 무효)",
+              "- [ ] 임시저장 때 파일이 암호화되고 최종 제출 뒤에는 수정·재제출할 수 없음을 알고 마감 전에 여유 있게 제출했다",
+              "- [ ] PDF를 열어 표·그림·글꼴이 깨지지 않았는지 쪽마다 확인했다(서버 렌더는 한글 화면과 다를 수 있음)",
+              "", "확인자: ________________  일시: ________________", ""]
+    return "\n".join(lines)
+
+
+__all__ = ["build_package", "latest_drafts", "make_slides"]

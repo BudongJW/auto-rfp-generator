@@ -1,0 +1,9 @@
+{
+  "name": "rfpgen-sidecars",
+  "private": true,
+  "description": "rfpgen Node 사이드카 — rhwp(MIT)로 HWPX를 렌더한다",
+  "type": "module",
+  "dependencies": {
+    "@rhwp/core": "0.9.0"
+  }
+}

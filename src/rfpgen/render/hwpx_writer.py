@@ -61,6 +61,9 @@ class ProposalWriter:
         self.fonts = fonts
         self.ids = self._ensure_styles()
         self._first = True
+        m = style["page"]["margin_mm"]
+        page_w = 210 if style["page"].get("orientation", "portrait") == "portrait" else 297
+        self.text_width = int((page_w - m["left"] - m["right"]) * MM)  # 표·상자를 본문 폭에 맞춘다
 
     # ---- 서식 ---------------------------------------------------------------------------
     def _run(self, role: str, font: str, *, bold: bool = False) -> str:
@@ -122,7 +125,7 @@ class ProposalWriter:
         n_rows, n_cols = len(rows) + (1 if header else 0), max(len(header), max((len(r) for r in rows), default=0))
         if n_cols == 0:
             return
-        t = self.doc.add_table(n_rows, n_cols)
+        t = self.doc.add_table(n_rows, n_cols, width=self.text_width)
         all_rows = ([header] if header else []) + rows
         for r, row in enumerate(all_rows):
             for c in range(n_cols):
@@ -145,7 +148,7 @@ class ProposalWriter:
 
     def message_box(self, text: str) -> None:
         """거버닝 메시지 상자(1×1 표, 음영)."""
-        t = self.doc.add_table(1, 1)
+        t = self.doc.add_table(1, 1, width=self.text_width)
         cell = t.cell(0, 0)
         cell.text = text
         cell.paragraphs[0].para_pr_id_ref = self.ids.para["table"]

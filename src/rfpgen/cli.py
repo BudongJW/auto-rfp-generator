@@ -151,6 +151,50 @@ def draft_cmd(
         typer.echo(f"  {res.outputs[key]}")
 
 
+@app.command("slides")
+def slides_cmd(
+    project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    style: Annotated[Path | None, typer.Option("--style")] = None,
+    profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
+) -> None:
+    """최신 절 초안으로 요약본(A4 가로)·발표자료(16:9) PPTX와 발표 대본·예상 질문을 만든다."""
+    from .package import make_slides
+
+    try:
+        res = make_slides(project, load_profile(overrides=profile_override or []), style_path=style)
+    except FileNotFoundError as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"요약본 {res.summary_slides}장: {res.summary}")
+    typer.echo(f"발표자료 {res.presentation_slides}장: {res.presentation}")
+    typer.echo(f"대본·예상 질문: {res.script}")
+
+
+@app.command("package")
+def package_cmd(
+    project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    kb: Annotated[Path | None, typer.Option("--kb", help="블라인드 점검용 회사 KB 폴더")] = None,
+    profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
+) -> None:
+    """HWPX·PPTX를 PDF로 바꾸고 파일 정보를 정리해 submission/에 모은 뒤 쪽수·용량·글꼴·블라인드를 점검한다."""
+    from .package import build_package
+
+    try:
+        res = build_package(project, load_profile(overrides=profile_override or []), kb_dir=kb)
+    except FileNotFoundError as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.secho(f"\n제출 패키지 — {project / 'submission'}", bold=True)
+    for d in res.docs:
+        typer.echo(f"  {d.doc_type:6s} {d.pdf.name:20s} {d.pages:4d}쪽 {d.size_bytes / 1024 / 1024:6.2f}MB")
+    rep = res.check
+    typer.echo(f"  총 용량 {rep.stats.get('total_mb')}MB · 점검 blocker {rep.count('blocker')}, major {rep.count('major')}, "
+               f"minor {rep.count('minor')}")
+    for n in res.notes:
+        typer.secho(f"  - {n}", fg=typer.colors.YELLOW)
+    typer.echo(f"  제출 전 점검표: {res.checklist}")
+
+
 @app.command("diff")
 def diff_cmd(
     project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)],

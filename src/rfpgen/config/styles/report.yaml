@@ -41,3 +41,18 @@ colors:
 
 header: "{title}"             # 블라인드면 사업명만(업체명 금지)
 footer_page_number: {prefix: "- ", suffix: " -"}
+
+# ---- 장표(PPTX) — 설계서 10.3절 -------------------------------------------------------------
+slides:
+  font: Noto Sans KR            # 장표는 글꼴 1~2종. hancom 경로에서는 조직 스타일로 덮어쓴다
+  palette: {main: "0055A5", dark: "003B71", light: "E8F1FA", gray: "8C8C8C", box: "F2F2F2", accent: "F28C28"}
+  summary:                      # 요약본(열람용): A4 가로
+    size_mm: [297, 210]
+    head_pt: 18
+    body_pt: [12, 11, 10]       # 개조식 단계별
+    max_lines: 14
+  presentation:                 # 발표자료: 16:9
+    size_mm: [338.67, 190.5]
+    head_pt: 24
+    body_pt: [18, 16, 14]
+    max_lines: 8
