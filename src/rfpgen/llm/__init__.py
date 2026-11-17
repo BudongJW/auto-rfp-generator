@@ -8,6 +8,7 @@ from .gateway import (
     LLMInvalidOutput,
     LLMPolicyError,
     LLMRefusal,
+    LLMTruncated,
     Provider,
     ProviderReply,
     Usage,
@@ -17,6 +18,6 @@ from .verify import BlockIndex, normalize_for_match, number_in_quote, verify_evi
 
 __all__ = [
     "BlockIndex", "Excerpt", "LLMCall", "LLMError", "LLMGateway", "LLMInvalidOutput", "LLMPolicyError",
-    "LLMRefusal", "Provider", "ProviderReply", "Usage", "keyword_excerpt", "normalize_for_match",
+    "LLMRefusal", "LLMTruncated", "Provider", "ProviderReply", "Usage", "keyword_excerpt", "normalize_for_match",
     "number_in_quote", "render_block", "strict_schema", "verify_evidence",
 ]

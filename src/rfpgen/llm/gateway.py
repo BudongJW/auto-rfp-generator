@@ -67,6 +67,10 @@ class LLMInvalidOutput(LLMError):
     pass
 
 
+class LLMTruncated(LLMInvalidOutput):
+    """출력이 max_tokens에서 잘림(사고 토큰도 상한에 포함된다). 상한을 늘려 다시 시도할 수 있다."""
+
+
 class LLMPolicyError(LLMError):
     pass
 
@@ -126,7 +130,7 @@ class LLMGateway:
         if reply.stop_reason == "max_tokens":
             record.update(status="truncated")
             self._audit(record)
-            raise LLMInvalidOutput(f"{call.task}: 출력이 max_tokens에서 잘렸습니다")
+            raise LLMTruncated(f"{call.task}: 출력이 max_tokens에서 잘렸습니다")
         try:
             data = schema.model_validate(json.loads(reply.text))
         except (json.JSONDecodeError, ValidationError) as exc:

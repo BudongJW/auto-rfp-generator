@@ -239,7 +239,10 @@ def test_text_requirements_added_with_ids_and_dedupe(maker, profile):
         {"name": "데이터 이관", "category": "데이터", "statement": "기존 민원 데이터를 신규 시스템으로 이관",
          "evidence": [migrate]},
     ], "notes": ""}
-    rfp, report, provider = _run(d, profile, {"text_requirements": [run1, run2]}, tasks=("text_requirements",))
+    tasks = dict(profile.value("llm.tasks"))
+    tasks["text_requirements"] = {**tasks["text_requirements"], "runs": 2}   # 두 번 돌려 흔들림 표시(기본은 1회)
+    twice = profile.merged({"llm": {"tasks": {"value": tasks, "status": "user", "ref": "test"}}}, "test")
+    rfp, report, provider = _run(d, twice, {"text_requirements": [run1, run2]}, tasks=("text_requirements",))
     new = {r.id: r for r in rfp.requirements if r.origin == "llm"}
     assert list(new) == ["X-0001", "X-0002"]
     assert new["X-0001"].name == "민원 데이터 이관" and new["X-0001"].category == "데이터 요구사항"
@@ -256,6 +259,29 @@ def test_text_requirements_added_with_ids_and_dedupe(maker, profile):
     pred = _obligation_block(compile_id_regex(profile.value("requirements.id_regex")))
     hits = [b.text for b in d.blocks if pred(b) and b.kind == "para"]  # 요구사항 표 셀은 발췌 단계에서 제외된다
     assert len(hits) == 2 and not any("PDF" in t for t in hits)
+
+
+def test_truncated_output_retried_once_with_larger_limit(maker, profile):
+    m = maker()
+    m.p("○ 계약상대자는 기존 민원 데이터 전체를 신규 시스템으로 이관하여야 한다")
+    d = m.doc
+    ok = {"requirements": [{"name": "민원 데이터 이관", "category": "데이터", "statement": "기존 민원 데이터 이관",
+                            "evidence": [{"block_id": _bid(d, "이관하여야"),
+                                          "quote": "기존 민원 데이터 전체를 신규 시스템으로 이관하여야 한다"}]}], "notes": ""}
+
+    class Truncating(FakeProvider):
+        def complete(self, call, json_schema):
+            if call.max_tokens < 100_000:                  # 첫 요청은 잘린다
+                self.calls.append(call)
+                return ProviderReply(text='{"requirements": [', model="m", stop_reason="max_tokens")
+            return super().complete(call, json_schema)
+
+    rfp, report = extract_rfp([d], profile)
+    provider = Truncating({"text_requirements": [ok]})
+    llm_assist(rfp, [d], profile, report, LLMGateway(provider), skip_tables=set(), tasks=("text_requirements",))
+    limits = [c.max_tokens for c in provider.calls]
+    assert limits == [64000, 128000]
+    assert "LLM-RETRY" in _codes(report) and any(r.origin == "llm" for r in rfp.requirements)
 
 
 # ---- 실패 처리 ---------------------------------------------------------------------------
