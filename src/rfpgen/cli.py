@@ -195,6 +195,35 @@ def package_cmd(
     typer.echo(f"  제출 전 점검표: {res.checklist}")
 
 
+@app.command("forms")
+def forms_cmd(
+    project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(회사 정보·실적·인력·인증)")] = None,
+    date: Annotated[str | None, typer.Option("--date", help="서식 날짜 칸에 넣을 날짜(YYYY-MM-DD, 기본: 오늘)")] = None,
+) -> None:
+    """공고 첨부(HWPX·HWP)의 별지 서식을 서식별로 떼어 내 빈칸을 KB·RFP 값으로 채운다(out/forms/)."""
+    import datetime as dt
+
+    from .forms import run_forms
+
+    try:
+        day = dt.date.fromisoformat(date) if date else None
+        rep = run_forms(project, kb_dir=kb, date=day)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.secho(f"\n별지 서식 {len(rep.forms)}개 — {project / 'out' / 'forms'}", bold=True)
+    for f in rep.forms:
+        todo = sum(1 for x in f.findings if x.severity in ("blocker", "major", "minor"))
+        typer.echo(f"  {f.form_no:10s} {f.title[:20]:20s} {f.doc_type:6s} 채운 칸 {len(f.fills):3d} · 확인할 것 {todo:2d}"
+                   f"{' · 블라인드' if f.blind else ''}")
+    for x in rep.findings:
+        typer.secho(f"  - [{x.severity}] {x.message}", fg=typer.colors.YELLOW)
+    if not rep.forms:
+        typer.secho("  HWP·HWPX 첨부에서 별지 서식을 찾지 못했습니다", fg=typer.colors.YELLOW)
+    typer.echo(f"  결과: {project / 'out' / 'forms' / 'forms.md'}")
+
+
 @app.command("diff")
 def diff_cmd(
     project: Annotated[Path, typer.Argument(help="프로젝트 폴더", exists=True, file_okay=False)],

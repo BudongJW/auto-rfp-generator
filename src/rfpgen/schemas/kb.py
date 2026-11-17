@@ -28,6 +28,21 @@ class Identity(BaseModel):
         return sorted({t.strip() for t in out if t and len(t.strip()) >= 2}, key=len, reverse=True)
 
 
+class CompanyInfo(BaseModel):
+    """별지 서식(입찰참가신청서·일반현황 등)에 들어가는 회사 기본정보. LLM에는 보내지 않는다."""
+
+    biz_no: str = ""             # 사업자등록번호
+    corp_no: str = ""            # 법인등록번호
+    address: str = ""
+    phone: str = ""
+    fax: str = ""
+    email: str = ""
+    homepage: str = ""
+    established: str = ""        # 설립일
+    capital: str = ""            # 자본금(표기 그대로)
+    employees: str = ""          # 종업원 수(표기 그대로)
+
+
 class Fact(BaseModel):
     id: str
     label: str                       # LLM에 보이는 설명(값은 보내지 않는다)
@@ -79,6 +94,7 @@ class ContentBlock(BaseModel):
 class CompanyKB(BaseModel):
     schema_version: str = "1"
     identity: Identity = Field(default_factory=Identity)
+    company: CompanyInfo = Field(default_factory=CompanyInfo)
     facts: list[Fact] = Field(default_factory=list)
     projects: list[ReferenceProject] = Field(default_factory=list)
     people: list[Person] = Field(default_factory=list)

@@ -183,4 +183,6 @@ def test_share_kb_respects_provider_policy(project, kb_dir, profile):
     ctx = fake.calls[0].context
     assert "<kb_catalog>" in ctx and "F-002: 정규직 개발 인력 수" in ctx
     assert "85명" not in ctx and "1250000000" not in ctx and "12.5억" not in ctx
+    sent = " ".join(c.system + c.context + c.instruction for c in fake.calls)
+    assert "123-45-67890" not in sent and "02-123-4567" not in sent      # 별지용 회사 기본정보는 보내지 않는다
     assert fake.calls[0].data_class == "internal"

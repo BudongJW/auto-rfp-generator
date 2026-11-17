@@ -2,7 +2,8 @@
 
 slides : 최신 절 초안·스토리보드 → out/summary.pptx(요약본, A4 가로), out/presentation.pptx(발표자료, 16:9), out/script.md
 package: HWPX·PPTX → PDF → 메타데이터 정리 → submission/(문서구분별, 회사명 없는 파일명) + 정확한 쪽수·용량·글꼴 점검
-         + 제출 전 점검표. 나라장터 업로드는 사람이 한다.
+         + 제출 전 점검표. `rfpgen forms`로 채운 별지 서식(out/forms/)은 문서구분별로 묶어 PDF 하나씩 만든다.
+         나라장터 업로드는 사람이 한다.
 """
 
 from __future__ import annotations
@@ -137,8 +138,12 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
         info = clean_pdf(raw, dst, title=f"{title} {doc_type}")
         docs.append(PackagedDoc(doc_type, src, dst, info.pages, info.size_bytes, info.fonts))
     del avail
+    form_docs = _package_forms(project, sub, raw_pdf, title, rep, notes)
+    docs += form_docs
 
-    by_type = {d.doc_type: d for d in docs}
+    by_type: dict[str, PackagedDoc] = {}
+    for d in docs:
+        by_type.setdefault(d.doc_type, d)          # 정성제안서는 본문이 먼저다(별지 묶음은 따로 센다)
     # SUB-002: 필수 문서구분
     needed = ["정성제안서"]
     if g.summary_page_limit is not None:
@@ -148,8 +153,12 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
     for t in needed:
         if t not in by_type:
             _f(rep, "SUB-002", "blocker", f"필수 제출 문서 '{t}'가 없습니다", basis="RFP 작성지침")
-    _f(rep, "SUB-002", "info", "정량제안서·하도급 계획서·별지 서식은 이 패키지에 없습니다 — 공고 서식으로 따로 준비해 함께 올리세요",
-       basis="나라장터 문서구분")
+    if form_docs:
+        _f(rep, "SUB-002", "info", f"별지 서식 묶음 {len(form_docs)}개를 넣었습니다 — 서명·날인이 필요한 서식은 날인본으로 바꾸고, "
+           "증빙(실적증명서·재무제표 등)은 따로 붙이세요", basis="나라장터 문서구분")
+    else:
+        _f(rep, "SUB-002", "info", "별지 서식이 없습니다 — `rfpgen forms`로 채우거나 공고 서식으로 따로 준비해 함께 올리세요",
+           basis="나라장터 문서구분")
 
     # PAGE-001·002: 정확한 쪽수
     excluded = set(g.count_exclusions.value) if g.count_exclusions else set(profile.value("page_limits.exclude_from_count"))
@@ -203,6 +212,9 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
         for f in prev.findings:
             if f.rule != "PAGE-001":
                 rep.findings.append(f)
+    form_checks = sorted((project / "checks").glob("forms-*.json"))
+    if form_docs and form_checks:
+        rep.findings += CheckReport.model_validate_json(form_checks[-1].read_text(encoding="utf-8")).findings
     rep.stats.update({"blocker": rep.count("blocker"), "major": rep.count("major"), "minor": rep.count("minor")})
     check_dir = project / "checks"
     check_dir.mkdir(exist_ok=True)
@@ -210,14 +222,59 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
     (check_dir / f"{rep.run_id}.md").write_text(report_markdown(rep), encoding="utf-8")
 
     checklist = sub / "제출전점검표.md"
-    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind), encoding="utf-8")
+    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind, bool(form_docs)), encoding="utf-8")
     (sub / "manifest.json").write_text(json.dumps([
         {"doc_type": d.doc_type, "file": d.pdf.name, "pages": d.pages, "bytes": d.size_bytes, "source": str(d.source.name)}
         for d in docs], ensure_ascii=False, indent=2), encoding="utf-8")
     return PackageResult(docs=docs, check=rep, checklist=checklist, notes=notes)
 
 
-def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: int, blind: bool) -> str:
+_FORM_FILES = {"정성제안서": "01-1_정성제안서_별지.pdf", "정량제안서": "04_정량제안서.pdf",
+               "하도급계획서": "05_하도급계획서.pdf", "기타문서": "06_기타문서.pdf"}
+
+
+def _package_forms(project: Path, sub: Path, raw_pdf: Path, title: str, rep: CheckReport,
+                   notes: list[str]) -> list[PackagedDoc]:
+    """out/forms/의 채운 서식을 PDF로 바꿔 문서구분별로 하나씩 묶는다."""
+    import pikepdf
+
+    from ..forms import load_forms_report
+
+    report = load_forms_report(project)
+    if report is None or not report.forms:
+        return []
+    groups: dict[str, list[Path]] = {}
+    for f in report.forms:
+        src = project / f.output
+        if not f.output or not src.exists():
+            continue
+        pdf = raw_pdf / "forms" / f"{src.stem}.pdf"
+        try:
+            hwpx_to_pdf(src, pdf)
+        except RenderError as exc:
+            notes.append(f"{f.form_no}: {exc}")
+            _f(rep, "SUB-002", "major", f"{f.form_no}({f.title}) PDF를 만들지 못했습니다 — {exc}", basis="제출 형식")
+            continue
+        groups.setdefault(f.doc_type, []).append(pdf)
+    out: list[PackagedDoc] = []
+    for doc_type, name in _FORM_FILES.items():
+        parts = groups.get(doc_type)
+        if not parts:
+            continue
+        merged = raw_pdf / "forms" / f"_{doc_type}.pdf"
+        with pikepdf.Pdf.new() as pdf:
+            for part in parts:
+                with pikepdf.Pdf.open(part) as src_pdf:
+                    pdf.pages.extend(src_pdf.pages)
+            pdf.save(merged)
+        dst = sub / name
+        info = clean_pdf(merged, dst, title=f"{title} {doc_type}")
+        out.append(PackagedDoc(doc_type, project / "out" / "forms", dst, info.pages, info.size_bytes, info.fonts))
+    return out
+
+
+def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: int, blind: bool,
+               has_forms: bool = False) -> str:
     total = sum(d.size_bytes for d in docs)
     lines = [f"# 제출 전 점검표 — {title}", "", f"점검 실행: {rep.run_id}", "",
              "| 문서구분(나라장터) | 파일 | 쪽수 | 용량 |", "|---|---|---|---|"]
@@ -230,7 +287,8 @@ def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: in
               "## 업로드 전 확인(사람)", "",
               "- [ ] blocker 0건을 확인했다(G5)",
               "- [ ] 나라장터 제출 화면에서 파일마다 문서구분(정성제안서·제안요약서·발표자료·정량제안서·하도급 계획서·기타)을 맞게 지정했다",
-              "- [ ] 정량제안서·별지 서식·하도급 계획서를 공고 양식으로 따로 준비해 함께 올렸다",
+              ("- [ ] 별지 서식 PDF의 빈칸·선택 칸(□)·서명·날인을 확인하고, 날인이 필요한 서식은 날인본으로 바꿨다(out/forms/forms.md)"
+               if has_forms else "- [ ] 정량제안서·별지 서식·하도급 계획서를 공고 양식으로 따로 준비해 함께 올렸다"),
               "- [ ] 가격입찰서를 따로 제출했다(제안서나 가격입찰서 중 하나라도 빠지면 입찰 무효)",
               "- [ ] 임시저장 때 파일이 암호화되고 최종 제출 뒤에는 수정·재제출할 수 없음을 알고 마감 전에 여유 있게 제출했다",
               "- [ ] PDF를 열어 표·그림·글꼴이 깨지지 않았는지 쪽마다 확인했다(서버 렌더는 한글 화면과 다를 수 있음)",

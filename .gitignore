@@ -8,3 +8,4 @@ build/
 /projects/
 /out/
 sidecars/node/node_modules/
+**/private/

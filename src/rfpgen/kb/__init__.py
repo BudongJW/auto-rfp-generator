@@ -1,11 +1,13 @@
 """회사 지식베이스(KB) 읽기·쓰기(설계서 6.5절, 16장 Q6: YAML/CSV 입력).
 
 폴더 구조
-  company.yaml       identity(블라인드 사전), facts(수치 근거)
+  company.yaml       identity(블라인드 사전), company(별지 서식용 기본정보), facts(수치 근거)
   projects.csv       유사사업 실적
   people.csv         투입 인력(역할·등급·경력 — 실명·연락처는 넣지 않는다)
   certifications.csv 인증
   content/*.md       재사용 후보 문단(앞머리 YAML: title, tags, source, won)
+  private/           (선택) people.csv(id,name) 실명, forms.yaml(values: 이름표→값) — 별지 서식에만 쓰고
+                     LLM·보고서·로그로 보내지 않는다. 저장소에 올리지 않는다(.gitignore)
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from pathlib import Path
 
 import yaml
 
-from ..schemas.kb import Certification, CompanyKB, ContentBlock, Fact, Identity, Person, ReferenceProject
+from ..schemas.kb import Certification, CompanyInfo, CompanyKB, ContentBlock, Fact, Identity, Person, ReferenceProject
 
 _LIST_SEP = re.compile(r"\s*[;|]\s*")
 
@@ -58,6 +60,7 @@ def load_kb(folder: Path) -> CompanyKB:
     company = company or {}
     kb = CompanyKB(
         identity=Identity(**(company.get("identity") or {})),
+        company=CompanyInfo(**{k: str(v) for k, v in (company.get("company") or {}).items()}),
         facts=[Fact(**{**f, "id": str(f["id"]), "value": str(f["value"]),
                        "valid_until": _date(f.get("valid_until"))}) for f in company.get("facts") or []],
     )
@@ -79,6 +82,11 @@ def load_kb(folder: Path) -> CompanyKB:
                                        tags=[str(t) for t in meta.get("tags") or []], source=str(meta.get("source") or ""),
                                        won=meta.get("won"), text=body.strip()))
     return kb
+
+
+def load_private_names(folder: Path) -> dict[str, str]:
+    """private/people.csv(id,name): 별지 서식의 '성명' 칸에만 쓴다. LLM·보고서·로그로 보내지 않는다."""
+    return {r["id"]: r.get("name", "") for r in _rows(Path(folder) / "private" / "people.csv") if r.get("id")}
 
 
 def check_kb(kb: CompanyKB, today: dt.date | None = None) -> list[str]:
@@ -111,6 +119,16 @@ identity:                 # 블라인드 점검 사전: 블라인드 평가에�
   domains: [yesi.co.kr]
   ceo: 홍길동
   products: [YesiFlow]
+company:                  # 별지 서식(입찰참가신청서·일반현황 등)에 들어가는 기본정보 — LLM에 보내지 않음
+  biz_no: 123-45-67890
+  corp_no: 110111-1234567
+  address: 서울특별시 ○○구 ○○로 1
+  phone: 02-123-4567
+  fax: 02-123-4568
+  email: bid@yesi.co.kr
+  established: 2010-03-02
+  capital: 10억 원
+  employees: 120명
 facts:
   - id: F-001
     label: 최근 공공 SW 유사사업 수행 건수(기간은 증빙 기준)
@@ -130,6 +148,9 @@ _TEMPLATE_FILES = {
                   "H-001,PM,특급,18,사업관리;공공SI,정보관리기술사;PMP\n"
                   "H-002,아키텍트,고급,12,MSA;클라우드,정보처리기사\n",
     "certifications.csv": "id,name,number,valid_until\nC-001,GS인증 1등급(YesiFlow),GS-24-0001,2027-03-31\n",
+    "private/people.csv": "id,name\nH-001,홍○○\nH-002,김○○\n",
+    "private/README.md": "# 개인정보(실명)\n\n이 폴더의 파일은 별지 서식의 '성명' 칸을 채울 때만 씁니다.\n"
+                         "LLM·보고서·로그로 보내지 않습니다. 저장소에 올리지 마세요.\n",
     "content/사업이해도_예시.md": "---\ntitle: 사업 이해도 — 민원 시스템 고도화\ntags: [사업이해도, 전략및방법론]\n"
                                "source: 2025 ○○시 민원 고도화 제안서\nwon: true\n---\n"
                                "□ 사업 환경\n○ 민원 처리 전 과정을 온라인으로 전환하려는 정책 방향에 맞춰 …\n",
@@ -140,6 +161,7 @@ def init_kb(folder: Path) -> list[Path]:
     """예시 KB 폴더를 만든다(이미 있는 파일은 건드리지 않는다)."""
     folder = Path(folder)
     (folder / "content").mkdir(parents=True, exist_ok=True)
+    (folder / "private").mkdir(parents=True, exist_ok=True)
     made: list[Path] = []
     targets = {"company.yaml": _TEMPLATE_COMPANY, **_TEMPLATE_FILES}
     for name, text in targets.items():
@@ -150,4 +172,4 @@ def init_kb(folder: Path) -> list[Path]:
     return made
 
 
-__all__ = ["check_kb", "init_kb", "load_kb"]
+__all__ = ["check_kb", "init_kb", "load_kb", "load_private_names"]
