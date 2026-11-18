@@ -31,7 +31,7 @@ from ..schemas.draft import (
 from ..schemas.kb import CompanyKB
 from ..schemas.plan import OutlineNode
 from .context import DraftInputs, kb_catalog, leaf_sections, outline_text, relevant_content, rfp_brief, section_text
-from .tokens import apply_tokens
+from .tokens import PLACEHOLDER, apply_tokens, placeholder_topic, similar_topic
 
 _NEEDS_BY_CANONICAL = {
     "제안업체일반": ["회사 일반현황(설립·인원·매출)", "유사사업 수행 실적", "보유 인증"],
@@ -259,9 +259,15 @@ def _section_from(inp: DraftInputs, node: OutlineNode, out: SectionOut, request_
         else:
             name = inp.requirement_index[rid].name if rid in inp.requirement_index else rid
             d.responses.append(RequirementResponse(req_id=rid, response=f"[확인 필요: {name} 대응 방안]", acceptance="미정"))
+    # missing_info는 본문에 이미 [확인 필요: …]로 적은 것을 표현만 바꿔 되풀이하는 경우가 많다(예제 실측: 절당 최대
+    # 11곳 중 5곳이 중복). 본문 자리표시와 비슷하면 다시 넣지 않는다.
+    present = [placeholder_topic(x) for x in PLACEHOLDER.findall(d.all_text())]
     for m in out.missing_info:
-        if m.strip() and f"[확인 필요: {m.strip()}]" not in d.all_text():
-            d.blocks.append(DraftBlock(kind="note", text=f"[확인 필요: {m.strip()}]"))
+        m = m.strip()
+        if not m or any(similar_topic(m, t) for t in present):
+            continue
+        d.blocks.append(DraftBlock(kind="note", text=f"[확인 필요: {m}]"))
+        present.append(m)
     if request_id:
         d.llm_call_ids.append(request_id)
     apply_tokens(d, inp.kb)

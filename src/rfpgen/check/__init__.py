@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 
 from ..diagram.build import project_months
-from ..draft.tokens import PLACEHOLDER, numbers
+from ..draft.tokens import PLACEHOLDER, numbers, open_items
 from ..profile import Profile
 from ..schemas.draft import CheckFinding, CheckReport, SectionDraft
 from ..schemas.kb import CompanyKB
@@ -140,8 +140,10 @@ def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, 
     # FACT-001·002·003
     for d in drafts:
         if d.placeholders:
-            _f(rep, "FACT-001", "blocker", f"{d.number} {d.title}: [확인 필요] 자리표시자 {len(d.placeholders)}개", section=d.section_id,
-               basis="허위 기재 방지(원칙 P2)")
+            items = open_items(d.placeholders)
+            _f(rep, "FACT-001", "blocker", f"{d.number} {d.title}: [확인 필요] 자리표시자 {len(d.placeholders)}개"
+               + (f"(확인할 내용 {len(items)}가지)" if 0 < len(items) < len(d.placeholders) else ""),
+               section=d.section_id, basis="허위 기재 방지(원칙 P2)")
         if d.unresolved_tokens:
             _f(rep, "FACT-001", "blocker", f"{d.number} {d.title}: KB에 없는 토큰 {', '.join(d.unresolved_tokens)}",
                section=d.section_id, basis="KB")

@@ -366,3 +366,31 @@ def test_data_requests_drop_rfp_content_and_merge():
     ]
     assert out[2].section_title == "Ⅰ.3, Ⅴ.2" and "절 2곳" in out[2].reason
     assert "발주기관 질의" in out[3].reason
+
+
+class MissingInfoFake(WriterFake):
+    """본문에 적은 [확인 필요]를 missing_info에 표현만 바꿔 되풀이한다."""
+
+    def complete(self, call, json_schema):
+        reply = super().complete(call, json_schema)
+        if not call.task.startswith("draft.section"):
+            return reply
+        data = json.loads(reply.text)
+        data["blocks"].append({"kind": "bullets", "text": "", "level": 1,
+                               "items": ["첨부 용량은 [확인 필요: 상향 후 첨부파일 용량 기준(SFR-001)]에 맞춤"],
+                               "table_header": [], "table_rows": [], "req_refs": []})
+        data["missing_info"] = ["상향 후 첨부파일 용량 기준 및 허용 파일 형식", "첨부파일 저장소 가용 용량"]
+        return ProviderReply(text=json.dumps(data, ensure_ascii=False), model="fake", stop_reason="end_turn",
+                             usage=reply.usage)
+
+
+def test_missing_info_not_repeated_and_items_counted(project, kb_dir, profile):
+    from rfpgen.draft.tokens import open_items
+
+    res = run_draft(project, profile, kb_dir=kb_dir, provider=MissingInfoFake())
+    func = next(d for d in res.drafts if d.title == "기능 요구사항")
+    notes = [b.text for b in func.blocks if b.kind == "note"]
+    assert notes == ["[확인 필요: 첨부파일 저장소 가용 용량]"]          # 본문과 같은 내용은 다시 넣지 않는다
+    assert open_items(["[확인 필요: 응답 시간 목표(PER-001)]", "[확인 필요: 응답 시간 목표 및 측정 기준]",
+                       "[확인 필요: PM 경력·자격]", "[확인 필요: 개발 리더 경력·자격]"]) == [
+        "응답 시간 목표", "PM 경력·자격", "개발 리더 경력·자격"]

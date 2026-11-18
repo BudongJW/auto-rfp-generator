@@ -46,6 +46,31 @@ def apply_tokens(draft: SectionDraft, kb: CompanyKB) -> None:
     draft.est_chars = len(re.sub(r"\s+", "", draft.all_text(figures=False)))  # 도식 면적은 점검에서 따로 센다
 
 
+def placeholder_topic(placeholder: str) -> str:
+    """'[확인 필요: 첨부 용량 기준(SFR-001)]' → '첨부 용량 기준'(괄호 꼬리 뺌)."""
+    inner = placeholder.strip("[]").split(":", 1)[-1].strip()
+    return re.sub(r"\s*\([^)]*\)\s*$", "", inner).strip()
+
+
+def similar_topic(a: str, b: str, threshold: float = 0.5) -> bool:
+    """확인할 내용이 같은지: 한쪽이 다른 쪽을 품거나 문자 2-gram 유사도가 기준 이상."""
+    from ..plan.outline import similarity
+
+    a, b = placeholder_topic(f"[{a}]"), placeholder_topic(f"[{b}]")
+    return bool(a and b) and similarity(a, b) >= threshold
+
+
+def open_items(placeholders: list[str]) -> list[str]:
+    """자리표시자를 확인할 내용별로 묶은 대표 목록(표현만 다른 것은 하나로)."""
+    reps: list[str] = []
+    for p in placeholders:
+        topic = placeholder_topic(p)
+        if not topic or any(similar_topic(topic, r) for r in reps):
+            continue
+        reps.append(topic)
+    return reps
+
+
 def numbers(text: str) -> list[str]:
     """단위가 붙은 숫자 표현(실적·인원·성능 등 근거가 필요한 수치)."""
     return [m.group(0).strip() for m in NUMBER.finditer(text or "")]
