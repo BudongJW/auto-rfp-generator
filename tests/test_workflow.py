@@ -60,7 +60,7 @@ def test_kb_is_remembered_and_example_values_warned(tmp_path):
 
 
 def test_default_project_dir():
-    assert str(default_project_dir(__import__("pathlib").Path("붙임1 제안요청서(최종).hwp"))) == "projects/붙임1_제안요청서(최종)"
+    assert default_project_dir(__import__("pathlib").Path("붙임1 제안요청서(최종).hwp")).as_posix() == "projects/붙임1_제안요청서(최종)"
 
 
 def _fake_sidecar(tmp_path, monkeypatch):
