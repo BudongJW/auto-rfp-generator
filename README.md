@@ -228,8 +228,9 @@ uv run rfpgen start 제안요청서.hwp --kb kb --llm
 ```
 
 - Windows PowerShell은 `$env:RFP_ANTHROPIC_API_KEY="sk-ant-..."`, Docker는 `docker run -e RFP_ANTHROPIC_API_KEY …`로 넘깁니다.
-- **보내는 것:** 공개 RFP 발췌만 보냅니다. 회사 KB의 값은 보내지 않고, 회사 수치는 LLM이 `{{fact:F-001}}` 같은 표시로만 쓰면 프로그램이 KB 값으로 바꿉니다. KB의 항목 이름·재사용 문단까지 보내려면 `--llm-share-kb`를 줍니다.
-- **시간·비용(공개 RFP 404쪽 기준 추정):** 분석 보강 약 7~10분·2~3달러, 본문 절당 1~2분·0.2~0.4달러. 자세한 측정은 [LLM 실측 기록](docs/analysis/llm-live-measurement.md)에 있습니다.
+- **보내는 것:** 공개 RFP 발췌만 보냅니다. 회사 KB의 값은 보내지 않고, 회사 수치는 LLM이 `{{fact:F-001}}` 같은 표시로만 쓰면 프로그램이 KB 값으로 바꿉니다.
+- **`--llm-share-kb`(선택):** KB의 항목 이름(실적명·발주처·인력 역할·등급)과 재사용 문단도 보냅니다. 실적·인력 자리의 `[확인 필요]`가 크게 줄고(예제: 핵심투입인력 절 15곳 → 6곳), 발표 대본·예상 질문 답변도 Claude가 씁니다(`rfpgen slides --llm --llm-share-kb`). 이때도 KB 값은 표시로 가려 보냅니다.
+- **시간·비용(공개 RFP 404쪽 기준 추정):** 분석 보강 2~3달러(과제 3개를 동시에 보냄), 본문 절당 0.2~0.4달러(3개씩 동시에). 짧게 쓴 절은 한 번 더 써서 분량을 채웁니다. 자세한 측정은 [LLM 실측 기록](docs/analysis/llm-live-measurement.md)에 있습니다.
 - 모든 호출은 `audit/llm_calls.jsonl`에 남습니다. LLM이 낸 값은 원문 인용을 확인한 것만 받고, 모두 '확인 필요(proposed)' 상태로 들어갑니다.
 - 모델은 자동으로 최신 Opus 계열을 고르며 `--llm-model`로 바꿀 수 있습니다. 실행별 추정 비용을 보려면 조직 프로필에 단가를 넣습니다([고급 설정](docs/advanced.md)).
 
