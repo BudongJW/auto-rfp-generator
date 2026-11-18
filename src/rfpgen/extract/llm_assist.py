@@ -101,6 +101,7 @@ class TextRequirementOut(BaseModel):
     category: RequirementCategory
     statement: str
     evidence: list[Evidence]
+    same_as: str
 
 
 class TextRequirementsOut(BaseModel):
@@ -397,8 +398,11 @@ def assist_text_requirements(run: _Runner, rfp: Rfp, skip: set[str], id_pattern:
     ex = run.excerpt("text_requirements", _obligation_block(compile_id_regex(id_pattern)), skip)
     if not ex.block_ids:
         return
-    outs: list[TextRequirementsOut] = run.call("text_requirements", _excerpt_context(ex.text),
-                                               TEXT_REQUIREMENTS_INSTRUCTION, TextRequirementsOut)
+    defined = "\n".join(f"- {r.id} {r.name[:40]}" for r in rfp.requirements[:400])
+    instruction = (f"<defined_requirements>\n{defined or '(없음)'}\n</defined_requirements>\n\n"
+                   + TEXT_REQUIREMENTS_INSTRUCTION)
+    outs: list[TextRequirementsOut] = run.call("text_requirements", _excerpt_context(ex.text), instruction,
+                                               TextRequirementsOut)
     n_runs = len(outs)
     rejected = 0
     runs_items = []
@@ -413,14 +417,24 @@ def assist_text_requirements(run: _Runner, rfp: Rfp, skip: set[str], id_pattern:
                 meta.setdefault(r.statement.strip(), r)
         runs_items.append(items)
 
-    existing = [" ".join([r.name, r.definition, *r.details]) for r in rfp.requirements]
+    by_id = {r.id: r for r in rfp.requirements}
+    existing = [(r.id, " ".join([r.name, r.definition, *r.details])) for r in rfp.requirements]
     used = {r.id for r in rfp.requirements}
     seq = 1
     new_ids: set[str] = set()
     unstable = []
+    merged: list[str] = []
     for count, (statement, locs) in _match_runs(runs_items):
         r = meta[statement]
-        if any(_similar(statement, e) >= 0.5 or _similar(r.name, e) >= 0.8 for e in existing):
+        same = r.same_as.strip()
+        if same in by_id:                       # LLM이 정의된 요구사항과 같다고 본 것: 그 요구사항의 원문 위치로 더한다
+            target = by_id[same]
+            target.locators += [lc for lc in locs if lc not in target.locators][:2]       # 서술형 원문 위치(최대 2곳)
+            merged.append(f"{same}←{r.name[:16]}")
+            continue
+        scores = [(max(_similar(statement, e), _similar(r.name, e) - 0.3), rid) for rid, e in existing]
+        best, best_id = max(scores, default=(0.0, None))
+        if best >= 0.5:
             continue  # 이미 ID가 있는 요구사항과 같은 내용
         while f"X-{seq:04d}" in used:
             seq += 1
@@ -432,12 +446,22 @@ def assist_text_requirements(run: _Runner, rfp: Rfp, skip: set[str], id_pattern:
         rfp.requirements.append(Requirement(
             id=rid, prefix="X", category=_CATEGORY_NAMES.get(r.category, r.category), name=r.name.strip()[:80],
             definition=statement[:400], origin="llm", confidence=0.8 if count == n_runs else 0.5, locators=locs[:2],
+            similar_to=best_id if best >= 0.3 and best_id in by_id else None,   # 애매하게 비슷하면 병합 후보로만
         ))
-        existing.append(statement)
+        existing.append((rid, statement))
     if new_ids:
         annotate_requirements(rfp, vocab, run.report, only=new_ids)
         run.report.add("LLM-REQ-ADDED", "warning",
                        f"ID 없는 서술형 요구사항 {len(new_ids)}건을 X- 번호로 추가했습니다 — G1에서 채택·병합 여부를 확인하세요")
+    candidates = [f"{r.id}→{r.similar_to}" for r in rfp.requirements if r.id in new_ids and r.similar_to]
+    if candidates:
+        run.report.add("LLM-REQ-MERGE", "warning",
+                       f"정의된 요구사항과 비슷해 병합 후보로 표시한 서술형 요구사항 {len(candidates)}건: "
+                       f"{', '.join(candidates[:8])} — G1에서 병합 여부를 정하세요")
+    if merged:
+        run.report.add("LLM-REQ-SAME", "info",
+                       f"정의된 요구사항과 같은 서술형 요구 {len(merged)}건은 새로 만들지 않고 그 요구사항의 원문 위치로 더했습니다: "
+                       f"{', '.join(merged[:8])}")
     if unstable:
         run.report.add("LLM-UNSTABLE", "warning",
                        f"{n_runs}회 실행 중 일부에서만 나온 서술형 요구사항 {len(unstable)}건: {', '.join(unstable[:8])}")

@@ -65,11 +65,12 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
     ], [20, 8, 10, 26, 10, 70, 22])
 
     _sheet(wb, "요구사항", ["ID", "접두어", "분류", "명칭", "정의", "세부내용", "산출정보", "관련 요구사항",
-                          "상세화 등급(추정)", "모호 표현", "추출 원천", "신뢰도", "RFP 원문 위치"], [
+                          "상세화 등급(추정)", "모호 표현", "추출 원천", "신뢰도", "RFP 원문 위치", "병합 후보"], [
         [r.id, r.prefix, r.category, r.name, r.definition, "\n".join(r.details), "\n".join(r.outputs),
-         ", ".join(r.related), r.detail_grade, ", ".join(r.ambiguities), r.origin, r.confidence, _loc_text(r.locators)]
+         ", ".join(r.related), r.detail_grade, ", ".join(r.ambiguities), r.origin, r.confidence, _loc_text(r.locators),
+         r.similar_to or ""]
         for r in rfp.requirements
-    ], [16, 8, 14, 30, 40, 70, 24, 18, 10, 20, 12, 8, 22])
+    ], [16, 8, 14, 30, 40, 70, 24, 18, 10, 20, 12, 8, 22, 12])
 
     targets = {line.node_id: line.target_chars for line in budget.lines}
     _sheet(wb, "목차·쪽수", ["번호", "제목", "수준", "연결 평가항목", "배점", "쪽수 예산", "목표 글자 수", "요구사항 수",

@@ -229,26 +229,42 @@ def test_text_requirements_added_with_ids_and_dedupe(maker, profile):
     m.p("○ 계약상대자는 기존 민원 데이터 전체를 신규 시스템으로 이관하여야 한다")
     m.p("○ 신규 시스템은 웹 접근성 품질인증 기준을 준수하여야 한다")
     m.p("○ 제안서는 PDF로 제출하여야 한다")
+    m.p("○ 민원인은 온라인으로 민원을 신청할 수 있어야 한다")
+    m.p("○ 온라인 민원 신청 기능을 모바일 화면으로도 제공하여야 한다")
     d = m.doc
     migrate = {"block_id": _bid(d, "이관하여야"), "quote": "기존 민원 데이터 전체를 신규 시스템으로 이관하여야 한다"}
     a11y = {"block_id": _bid(d, "웹 접근성"), "quote": "웹 접근성 품질인증 기준을 준수하여야 한다"}
+    online = {"block_id": _bid(d, "온라인으로 민원을"), "quote": "민원인은 온라인으로 민원을 신청할 수 있어야 한다"}
+    mobile = {"block_id": _bid(d, "모바일 화면으로도"), "quote": "온라인 민원 신청 기능을 모바일 화면으로도 제공하여야 한다"}
     run1 = {"requirements": [
         {"name": "민원 데이터 이관", "category": "데이터", "statement": "기존 민원 데이터 전체를 신규 시스템으로 이관",
-         "evidence": [migrate]},
-        {"name": "웹 접근성 준수", "category": "품질", "statement": "웹 접근성 품질인증 기준 준수", "evidence": [a11y]},
+         "evidence": [migrate], "same_as": ""},
+        {"name": "웹 접근성 준수", "category": "품질", "statement": "웹 접근성 품질인증 기준 준수", "evidence": [a11y],
+         "same_as": ""},
+        {"name": "온라인 민원 신청", "category": "기능", "statement": "민원인이 온라인으로 민원 신청",   # 정의된 SFR-001과 같다
+         "evidence": [online], "same_as": "SFR-001"},
+        {"name": "모바일 신청 화면", "category": "기능", "statement": "온라인 민원 신청 기능을 모바일 화면으로도 제공",
+         "evidence": [mobile], "same_as": ""},                                             # 비슷하지만 같지는 않다
     ], "notes": ""}
     run2 = {"requirements": [
         {"name": "데이터 이관", "category": "데이터", "statement": "기존 민원 데이터를 신규 시스템으로 이관",
-         "evidence": [migrate]},
+         "evidence": [migrate], "same_as": ""},
     ], "notes": ""}
     tasks = dict(profile.value("llm.tasks"))
     tasks["text_requirements"] = {**tasks["text_requirements"], "runs": 2}   # 두 번 돌려 흔들림 표시(기본은 1회)
     twice = profile.merged({"llm": {"tasks": {"value": tasks, "status": "user", "ref": "test"}}}, "test")
     rfp, report, provider = _run(d, twice, {"text_requirements": [run1, run2]}, tasks=("text_requirements",))
     new = {r.id: r for r in rfp.requirements if r.origin == "llm"}
-    assert list(new) == ["X-0001", "X-0002"]
+    assert list(new) == ["X-0001", "X-0002", "X-0003"]
     assert new["X-0001"].name == "민원 데이터 이관" and new["X-0001"].category == "데이터 요구사항"
     assert new["X-0001"].confidence == 0.8 and new["X-0002"].confidence == 0.5
+    # 같은 요구는 새로 만들지 않고 정의된 요구사항의 원문 위치로 더한다, 비슷한 것은 병합 후보로 표시한다
+    sfr = next(r for r in rfp.requirements if r.id == "SFR-001")
+    assert any(lc.block_id == online["block_id"] for lc in sfr.locators)
+    assert new["X-0003"].name == "모바일 신청 화면" and new["X-0003"].similar_to == "SFR-001"
+    assert new["X-0001"].similar_to is None
+    assert "LLM-REQ-SAME" in _codes(report) and "LLM-REQ-MERGE" in _codes(report)
+    assert "<defined_requirements>" in provider.calls[0].instruction and "SFR-001 민원 신청 관리" in provider.calls[0].instruction
     assert new["X-0001"].detail_grade is not None  # 새 요구사항에도 상세화 등급·질의서 후보를 만든다
     assert "LLM-REQ-ADDED" in _codes(report) and "LLM-UNSTABLE" in _codes(report)
     ctx = provider.calls[0].context
@@ -260,7 +276,7 @@ def test_text_requirements_added_with_ids_and_dedupe(maker, profile):
 
     pred = _obligation_block(compile_id_regex(profile.value("requirements.id_regex")))
     hits = [b.text for b in d.blocks if pred(b) and b.kind == "para"]  # 요구사항 표 셀은 발췌 단계에서 제외된다
-    assert len(hits) == 2 and not any("PDF" in t for t in hits)
+    assert len(hits) == 3 and not any("PDF" in t for t in hits)  # "할 수 있어야 한다"는 의무 표현 목록 밖(문맥 줄로 들어감)
 
 
 def test_truncated_output_retried_once_with_larger_limit(maker, profile):
@@ -269,7 +285,8 @@ def test_truncated_output_retried_once_with_larger_limit(maker, profile):
     d = m.doc
     ok = {"requirements": [{"name": "민원 데이터 이관", "category": "데이터", "statement": "기존 민원 데이터 이관",
                             "evidence": [{"block_id": _bid(d, "이관하여야"),
-                                          "quote": "기존 민원 데이터 전체를 신규 시스템으로 이관하여야 한다"}]}], "notes": ""}
+                                          "quote": "기존 민원 데이터 전체를 신규 시스템으로 이관하여야 한다"}],
+                            "same_as": ""}], "notes": ""}
 
     class Truncating(FakeProvider):
         def complete(self, call, json_schema):

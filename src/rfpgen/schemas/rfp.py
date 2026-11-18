@@ -88,6 +88,7 @@ class Requirement(BaseModel):
     ambiguities: list[str] = Field(default_factory=list)
     origin: Literal["detail_table", "summary_table", "text_rule", "llm", "human"] = "detail_table"
     locators: list[Locator] = Field(default_factory=list)
+    similar_to: str | None = None        # 병합 후보: 내용이 비슷한 정의된 요구사항 ID(서술형 X-에만, G1에서 판단)
 
 
 TocProduction = Literal["자유서식", "별지서식", "대응표", "증빙첨부", "미정"]
