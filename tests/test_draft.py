@@ -399,3 +399,12 @@ def test_missing_info_not_repeated_and_agency_questions(project, kb_dir, profile
     assert open_items(["[확인 필요: 응답 시간 목표(PER-001)]", "[확인 필요: 응답 시간 목표 및 측정 기준]",
                        "[확인 필요: PM 경력·자격]", "[확인 필요: 개발 리더 경력·자격]"]) == [
         "응답 시간 목표", "PM 경력·자격", "개발 리더 경력·자격"]
+
+
+def test_same_question_groups_rewordings_only():
+    from rfpgen.draft.tokens import same_question
+
+    assert same_question("SFR-001 대용량 첨부 개선의 목표 첨부파일 용량", "첨부파일 용량 상향 목표치")
+    assert same_question("연계기관(행정정보 공동이용 시스템)별 담당 부서 및 협의 창구", "연계기관별 담당 부서 및 협의 창구")
+    assert not same_question("PER-001 목표 응답 시간", "첨부파일 목표 용량")
+    assert not same_question("현행 공동이용 연계 대상 정보 목록", "현행 시스템 구성도와 연계 인터페이스 명세")

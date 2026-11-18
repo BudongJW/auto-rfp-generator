@@ -60,6 +60,27 @@ def similar_topic(a: str, b: str, threshold: float = 0.5) -> bool:
     return bool(a and b) and similarity(a, b) >= threshold
 
 
+_Q_STOP = {"및", "등", "여부", "자료", "목록", "정의", "관련", "대한", "위한"}
+_Q_PARTICLE = re.compile(r"(의|과|와|을|를|은|는|이|가|에|로|으로)$")
+
+
+def _question_grams(text: str) -> set[str]:
+    text = re.sub(r"\([^)]*\)", " ", text)                  # 괄호 속 보충 설명
+    text = re.sub(r"[A-Z]{2,4}-\d{2,4}", " ", text)          # 요구사항 ID
+    words = [_Q_PARTICLE.sub("", w) if len(w) > 2 else w for w in re.split(r"[\s·,/]+", text) if w]
+    out: set[str] = set()
+    for w in (w for w in words if w and w not in _Q_STOP):
+        out |= {w[i:i + 2] for i in range(max(1, len(w) - 1))}
+    return out
+
+
+def same_question(a: str, b: str, threshold: float = 0.6) -> bool:
+    """발주기관에 물을 내용이 같은지(질의서 묶기용): 괄호·요구사항 ID·군말을 빼고, 짧은 쪽 기준 낱말 2-gram 겹침.
+    회사 쪽 확인 사항(인력별 경력 등)에는 쓰지 않는다 — 'PM 경력'과 '개발 리더 경력'을 같다고 볼 수 있다."""
+    ga, gb = _question_grams(a), _question_grams(b)
+    return bool(ga and gb) and len(ga & gb) / min(len(ga), len(gb)) >= threshold
+
+
 def open_items(placeholders: list[str]) -> list[str]:
     """자리표시자를 확인할 내용별로 묶은 대표 목록(표현만 다른 것은 하나로)."""
     reps: list[str] = []

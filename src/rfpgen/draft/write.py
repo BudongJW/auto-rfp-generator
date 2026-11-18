@@ -32,7 +32,7 @@ from ..schemas.draft import (
 from ..schemas.kb import CompanyKB
 from ..schemas.plan import OutlineNode
 from .context import DraftInputs, kb_catalog, leaf_sections, outline_text, relevant_content, rfp_brief, section_text
-from .tokens import PLACEHOLDER, apply_tokens, open_items, placeholder_topic, similar_topic
+from .tokens import PLACEHOLDER, apply_tokens, open_items, placeholder_topic, same_question, similar_topic
 
 _NEEDS_BY_CANONICAL = {
     "제안업체일반": ["회사 일반현황(설립·인원·매출)", "유사사업 수행 실적", "보유 인증"],
@@ -175,7 +175,8 @@ def draft_questions(drafts: list[SectionDraft], sb: Storyboard | None) -> list[t
     out: list[tuple[str, str]] = []
 
     def add(where: str, topic: str) -> None:
-        if topic and not any(similar_topic(topic, t) for _, t in out):
+        topic = re.sub(r"\s*\(\s*\)", "", topic).strip()     # '[확인 필요]'를 지우고 남은 빈 괄호
+        if topic and not any(same_question(topic, t) for _, t in out):
             out.append((where, topic))
 
     for d in drafts:
@@ -199,7 +200,8 @@ def merge_requests(requests: list[DataRequest], threshold: float = 0.35) -> list
     요청한 절을 함께 적는다. 분류 순서, 같은 분류 안에서는 여러 절이 요청한 것부터."""
     merged: list[DataRequest] = []
     for r in requests:
-        need = re.sub(r"\s*\[확인 필요[^\]]*\]\s*", " ", r.need).strip()
+        need = re.sub(r"\s*\[확인 필요[^\]]*\]\s*", " ", r.need)
+        need = re.sub(r"\s*\(\s*\)", "", need).strip()          # 꼬리표를 지우고 남은 빈 괄호
         if not need or _RFP_NEED.search(need):
             continue
         cat = _category(need)
