@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from ..diagram.build import plan_figures
 from ..llm import LLMCall, LLMError, LLMGateway
-from ..llm.prompts import SECTION_INSTRUCTION, STORYBOARD_INSTRUCTION, SYSTEM_WRITER
+from ..llm.prompts import EXPAND_INSTRUCTION, SECTION_INSTRUCTION, STORYBOARD_INSTRUCTION, SYSTEM_WRITER
 from ..plan.outline import similarity
 from ..profile import Profile
 from ..schemas.draft import (
@@ -194,16 +194,7 @@ def skeleton_section(inp: DraftInputs, node: OutlineNode) -> SectionDraft:
     return d
 
 
-def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile, share_kb: bool) -> SectionDraft:
-    spec = profile.value("llm.tasks")["section"]
-    # 고정 접두부(캐시): RFP 요약(+ KB 카탈로그). 가변부: 이 절의 정보와 작업 지시.
-    context = rfp_brief(inp) + ("\n" + kb_catalog(inp.kb) if share_kb else "")
-    instruction = section_text(inp, node, include_kb_content=share_kb) + "\n\n" + SECTION_INSTRUCTION
-    # 사고 토큰도 상한에 들어간다: 요구사항 수로 줄이면 잘린다(2026-11-17 실측, 8K에서 3절 중 2절 잘림)
-    max_tokens = int(spec["max_tokens"])
-    out, reply = gateway.run(LLMCall(task="draft.section", system=SYSTEM_WRITER, context=context, instruction=instruction,
-                                     schema=SectionOut, effort=spec["effort"], max_tokens=max_tokens,
-                                     data_class="internal" if share_kb else "public"), SectionOut)
+def _section_from(inp: DraftInputs, node: OutlineNode, out: SectionOut, request_id: str | None) -> SectionDraft:
     d = SectionDraft(section_id=node.id, number=node.number, title=node.title, origin="llm",
                      head_message=out.head_message.strip())
     for b in out.blocks:
@@ -227,9 +218,42 @@ def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profil
     for m in out.missing_info:
         if m.strip() and f"[확인 필요: {m.strip()}]" not in d.all_text():
             d.blocks.append(DraftBlock(kind="note", text=f"[확인 필요: {m.strip()}]"))
-    if reply.request_id:
-        d.llm_call_ids.append(reply.request_id)
+    if request_id:
+        d.llm_call_ids.append(request_id)
     apply_tokens(d, inp.kb)
+    return d
+
+
+def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile, share_kb: bool) -> SectionDraft:
+    spec = profile.value("llm.tasks")["section"]
+    # 고정 접두부(캐시): RFP 요약(+ KB 카탈로그). 가변부: 이 절의 정보와 작업 지시.
+    context = rfp_brief(inp) + ("\n" + kb_catalog(inp.kb) if share_kb else "")
+    section = section_text(inp, node, include_kb_content=share_kb)
+    # 사고 토큰도 상한에 들어간다: 요구사항 수로 줄이면 잘린다(2026-11-17 실측, 8K에서 3절 중 2절 잘림)
+    max_tokens = int(spec["max_tokens"])
+    data_class = "internal" if share_kb else "public"
+    out, reply = gateway.run(LLMCall(task="draft.section", system=SYSTEM_WRITER, context=context,
+                                     instruction=section + "\n\n" + SECTION_INSTRUCTION, schema=SectionOut,
+                                     effort=spec["effort"], max_tokens=max_tokens, data_class=data_class), SectionOut)
+    d = _section_from(inp, node, out, reply.request_id)
+
+    # 분량 보강: 목표 최소 글자 수의 expand_below 배보다 짧으면 1차 초안을 주고 한 번 더 쓰게 한다
+    # (2026-11-18 예제 실측: 목표 글자 수를 줘도 65%에 그친 절이 있었다). 길어졌을 때만 바꾼다.
+    target = next((ln.target_chars for ln in inp.budget.lines if ln.node_id == node.id), [])
+    ratio = float(spec.get("expand_below", 0) or 0)
+    if target and ratio and d.est_chars < target[0] * ratio:
+        instruction = (section + f"\n\n<draft>\n{out.model_dump_json()}\n</draft>\n\n"
+                       + EXPAND_INSTRUCTION.format(current=d.est_chars, minimum=target[0], maximum=target[1]))
+        try:
+            out2, reply2 = gateway.run(LLMCall(task="draft.section.expand", system=SYSTEM_WRITER, context=context,
+                                               instruction=instruction, schema=SectionOut, effort=spec["effort"],
+                                               max_tokens=max_tokens, data_class=data_class), SectionOut)
+        except LLMError:
+            return d                                     # 보강이 실패해도 1차 초안은 쓴다
+        d2 = _section_from(inp, node, out2, reply2.request_id)
+        if d2.est_chars > d.est_chars:
+            d2.llm_call_ids = d.llm_call_ids + d2.llm_call_ids
+            return d2
     return d
 
 

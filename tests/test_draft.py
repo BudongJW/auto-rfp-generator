@@ -257,3 +257,33 @@ def test_fact_check_accepts_rfp_values_and_counts(project):
     for bad in ["9개월", "6개", "35개", "99%", "25건"]:
         assert not supported(bad, src), bad
     assert numbers("착수 1~2개월, 6개 단계") == ["2개월", "6개"]          # '2개월'을 '2개'로 읽지 않는다
+
+
+class ExpandingFake(WriterFake):
+    """1차 초안은 짧게, 보강 요청에는 길게 답한다."""
+
+    def complete(self, call, json_schema):
+        reply = super().complete(call, json_schema)
+        if call.task != "draft.section.expand":
+            return reply
+        data = json.loads(reply.text)
+        data["blocks"].append({"kind": "bullets", "text": "", "level": 1, "items": ["세부 수행 절차와 검증 방법 " * 40],
+                               "table_header": [], "table_rows": [], "req_refs": []})
+        return ProviderReply(text=json.dumps(data, ensure_ascii=False), model="fake", stop_reason="end_turn",
+                             usage=reply.usage)
+
+
+def test_short_llm_section_gets_one_expansion(project, kb_dir, profile):
+    fake = ExpandingFake()
+    res = run_draft(project, profile, kb_dir=kb_dir, provider=fake)
+    expands = [c for c in fake.calls if c.task == "draft.section.expand"]
+    assert expands and all("<draft>" in c.instruction and "목표 범위" in c.instruction for c in expands)
+    func = next(d for d in res.drafts if d.title == "기능 요구사항")
+    assert "세부 수행 절차와 검증 방법" in func.all_text() and len(func.llm_call_ids) <= 2
+    # 0이면 보강하지 않는다
+    tasks = dict(profile.value("llm.tasks"))
+    tasks["section"] = {**tasks["section"], "expand_below": 0}
+    fake = ExpandingFake()
+    run_draft(project, profile.merged({"llm": {"tasks": {"value": tasks}}}, "test"), kb_dir=kb_dir, provider=fake,
+              refresh_storyboard=True)
+    assert not [c for c in fake.calls if c.task == "draft.section.expand"]
