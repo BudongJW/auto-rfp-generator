@@ -87,6 +87,19 @@ def test_slides_layout_and_privacy(drafted):
     assert "# 예상 질문" in script and "사업의 목표와 범위를 정확히 이해하고 있는가" in script
 
 
+def test_slide_head_fits_box():
+    from rfpgen.render.slides import LINE_EM, PT_MM, fit_text
+
+    assert fit_text("[확인 필요]", 271, 14, 18, 10) == ("[확인 필요]", 18.0)
+    long = ("당사는 민원 유형별 동적 신청서, 최대 100MB 분할·이어올리기 첨부, 문자·이메일 알림, 수동·자동 임시저장, "
+            "처리 단계 이력 기반 현황 조회를 공통 모듈로 구축하여 SFR-001과 SFR-002를 빠짐없이 구현함")
+    text, pt = fit_text(long, 271, 14, 18, 10)
+    assert text == long and 10 <= pt < 18                     # 줄이면 들어간다(두 줄)
+    assert 2 * pt * PT_MM * LINE_EM <= 14
+    text, pt = fit_text(long * 3, 271, 14, 18, 10)           # 가장 작은 크기로도 넘치면 줄여 쓴다
+    assert pt == 10 and text.endswith("…") and len(text) < len(long * 3)
+
+
 def test_clean_pdf_strips_metadata(tmp_path):
     pytest.importorskip("reportlab")
     from reportlab.pdfgen import canvas

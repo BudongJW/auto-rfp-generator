@@ -18,6 +18,7 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Mm, Pt
 
+from ..diagram.svg import text_w, wrap
 from ..draft.tokens import PLACEHOLDER
 from ..schemas.draft import SectionDraft, Storyboard
 from ..schemas.plan import Outline, OutlineNode
@@ -141,6 +142,31 @@ def build_specs(rfp: Rfp, outline: Outline, drafts: list[SectionDraft], storyboa
 
 # ---- 그리기 -------------------------------------------------------------------------------------
 
+PT_MM = 25.4 / 72
+LINE_EM = 1.45          # Noto Sans CJK 줄 높이(글자 크기의 배수, LibreOffice·PowerPoint 기준)
+
+
+def fit_text(text: str, w_mm: float, h_mm: float, max_pt: float, min_pt: float) -> tuple[str, float]:
+    """상자(w×h mm)에 들어가는 가장 큰 글자 크기를 고른다. 가장 작은 크기로도 넘치면 줄 수에 맞춰 줄이고 '…'를 붙인다.
+
+    글자 폭은 추정값이므로 너비에 여유(95%)를 둔다. 돌려주는 값: (쓸 글, 글자 크기 pt).
+    """
+    w = w_mm * 0.95
+    pt = float(max_pt)
+    while True:
+        lines = wrap(text, w, pt * PT_MM)
+        if len(lines) * pt * PT_MM * LINE_EM <= h_mm or pt - 1 < min_pt:
+            break
+        pt -= 1
+    keep = max(1, int(h_mm / (pt * PT_MM * LINE_EM)))
+    if len(lines) <= keep:
+        return text, pt
+    last = lines[keep - 1]
+    while last and text_w(last + "…", pt * PT_MM) > w:
+        last = last[:-1]
+    return " ".join([*lines[:keep - 1], last.rstrip() + "…"]), pt
+
+
 
 class DeckWriter:
     def __init__(self, style: dict[str, Any], mode: str) -> None:
@@ -171,13 +197,15 @@ class DeckWriter:
             el.set("typeface", self.font)
 
     def _text(self, slide, x, y, w, h, lines: list[tuple[str, float, bool, str | None]], *,
-              align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP):
+              align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, margin_v: float | None = None):
         s = self.scale
         box = slide.shapes.add_textbox(Mm(x * s), Mm(y * s), Mm(w * s), Mm(h * s))
         tf = box.text_frame
         tf.word_wrap = True
         tf.vertical_anchor = anchor
         tf.margin_left = tf.margin_right = Mm(1)
+        if margin_v is not None:
+            tf.margin_top = tf.margin_bottom = Mm(margin_v)
         for i, (text, size, bold, color) in enumerate(lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.alignment = align
@@ -232,7 +260,12 @@ class DeckWriter:
                 x += 26.5
             if len(spec.req_ids) > 8:
                 self._text(slide, x, 14, 20, 6, [(f"+{len(spec.req_ids) - 8}", 8, True, pal["dark"])])
-            self._text(slide, 12, 22, W - 24, 15, [(spec.head, self.mode["head_pt"], True, pal["dark"])], anchor=MSO_ANCHOR.MIDDLE)
+            # 거버닝 메시지: 상자(15mm)를 넘지 않게 글자 크기를 줄인다(긴 메시지가 위아래 슬롯을 덮지 않게)
+            head_pt = float(self.mode["head_pt"])
+            head, pt = fit_text(spec.head, (W - 24) * self.scale - 2, 15 * self.scale - 1, head_pt,
+                                max(10.0, round(head_pt * 0.5)))
+            self._text(slide, 12, 22, W - 24, 15, [(head, pt, True, pal["dark"])], anchor=MSO_ANCHOR.MIDDLE,
+                       margin_v=0.5)
             self._rect(slide, 12, 37.5, W - 24, 0.8, pal["main"])
             body_w = (W - 24) * (0.4 if spec.image else 0.62 if (spec.table or spec.side_points) else 1.0)
             lines, used = [], 0
