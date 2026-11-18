@@ -177,6 +177,13 @@ def find_page(pdf: Path, needle: str, *, with_image: bool = False) -> int:
     return 1
 
 
+def page_text(pdf: Path, page: int) -> str:
+    import pdfplumber
+
+    with pdfplumber.open(pdf) as doc:
+        return doc.pages[page - 1].extract_text() or "" if page <= len(doc.pages) else ""
+
+
 def autocrop(path: Path, pad: int = 24) -> None:
     im = Image.open(path).convert("RGB")
     bbox = ImageChops.difference(im, Image.new("RGB", im.size, "white")).getbbox()
@@ -259,8 +266,10 @@ def main() -> None:
     sub = p / "submission"
     shots_dir = Path(tempfile.mkdtemp(prefix="rfpgen-shots-"))
     main_pdf = sub / "01_정성제안서.pdf"
-    pages = [find_page(main_pdf, "사업 이해도"), find_page(main_pdf, "목표 시스템 구성도", with_image=True),
-             find_page(main_pdf, "요구사항 대응")]
+    responses = find_page(main_pdf, "요구사항 대응")
+    if "수용" not in page_text(main_pdf, responses):                # 제목만 쪽 끝에 걸리면 표가 있는 다음 쪽
+        responses += 1
+    pages = [find_page(main_pdf, "사업 이해도"), find_page(main_pdf, "목표 시스템 구성도", with_image=True), responses]
     shots = [pdf_page_png(main_pdf, n, shots_dir / f"proposal-{i}") for i, n in enumerate(pages)]
     for s in shots:
         frame(s)
