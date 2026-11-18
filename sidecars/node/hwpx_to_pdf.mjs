@@ -67,8 +67,14 @@ const executablePath = process.env.RFPGEN_CHROMIUM_PATH || undefined;
 const browser = await playwright.chromium.launch(executablePath ? { executablePath } : {});
 try {
   const page = await browser.newPage();
+  // 쪽 SVG마다 id(cell-clip-15 등)가 다시 1부터 매겨진다. 한 HTML에 이어 붙이면 url(#id)가 앞쪽의
+  // 같은 id를 가리켜 다른 쪽의 잘라내기 영역이 적용된다(표 칸 글이 첫 줄만 남는 등). 쪽마다 접두어를 붙인다.
+  const scopeIds = (s, i) => s
+    .replace(/\sid="([^"]+)"/g, ` id="p${i}-$1"`)
+    .replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, `url(#p${i}-$2)`)
+    .replace(/(\s(?:xlink:)?href=")#([^"]+)"/g, `$1#p${i}-$2"`);
   const body = svgs
-    .map((s) => `<div class="p">${s.replace(/<\?xml[^>]*>/, '')}</div>`)
+    .map((s, i) => `<div class="p">${scopeIds(s.replace(/<\?xml[^>]*>/, ''), i + 1)}</div>`)
     .join('\n');
   await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${fontFaces}
     @page { size: ${pxToMm(w).toFixed(2)}mm ${pxToMm(h).toFixed(2)}mm; margin: 0 }

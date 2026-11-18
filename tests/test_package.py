@@ -102,6 +102,37 @@ def test_clean_pdf_strips_metadata(tmp_path):
     assert info.metadata == {"/Title": "사업명 정성제안서"} and info.pages == 1
 
 
+@pytest.mark.skipif(not converters_available()["hwpx"], reason="HWPX 변환기(rhwp 사이드카)가 없습니다")
+def test_hwpx_pdf_keeps_each_page_clip(tmp_path):
+    """쪽 SVG의 id가 겹쳐도 앞쪽의 잘라내기 영역이 뒤쪽 표 칸에 적용되지 않는다(긴 상자 글이 다 보인다)."""
+    import logging
+
+    import pdfplumber
+
+    from rfpgen.render.hwpx_writer import ProposalWriter, load_style
+    from rfpgen.render.pdf import hwpx_to_pdf
+
+    long = ("본 사업은 운영 중인 통합민원시스템을 계약일로부터 8개월 안에 서비스 중단 없이 고도화하여 민원인 편의, "
+            "처리 효율, 개인정보 보호, 안정적 성능을 함께 확보하는 사업이며 마지막낱말확인")
+    w = ProposalWriter(load_style())
+    w.para("Ⅰ. 첫 장", "chapter")
+    w.para("1. 첫 절", "section")
+    w.message_box("[짧은 상자]")                     # 1쪽: 한 줄 높이 칸
+    w.para("Ⅱ. 둘째 장", "chapter", page_break=True)
+    w.para("1. 둘째 절", "section")
+    w.message_box(long)                              # 2쪽: 같은 자리, 여러 줄 칸
+    w.page_setup("")
+    src = tmp_path / "boxes.hwpx"
+    w.save(src)
+    pdf = tmp_path / "boxes.pdf"
+    hwpx_to_pdf(src, pdf)
+    logging.getLogger("pdfminer").setLevel(logging.ERROR)
+    with pdfplumber.open(pdf) as doc:
+        assert len(doc.pages) == 2
+        text = (doc.pages[1].extract_text() or "").replace(" ", "")
+    assert "마지막낱말확인" in text
+
+
 @needs_converters
 def test_package_end_to_end_and_checks(drafted):
     project, kb, profile = drafted
