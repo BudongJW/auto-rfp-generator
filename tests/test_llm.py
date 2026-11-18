@@ -290,11 +290,13 @@ def test_truncated_output_retried_once_with_larger_limit(maker, profile):
 
 
 def test_refusal_and_auth_error_keep_deterministic_results(rfp_doc, profile):
-    rfp, report, _ = _run(rfp_doc, profile, {"guideline": ["REFUSE"],
+    rfp, report, _ = _run(rfp_doc, profile, {"guideline": [LLMError("guideline: 인증 실패 — API 키를 확인하세요")],
                                              "compliance": [LLMError("compliance: 인증 실패 — API 키를 확인하세요")]})
     codes = _codes(report)
-    assert "LLM-REFUSAL" in codes and "LLM-ERROR" in codes
-    assert report.stats["llm_calls"] == 1  # 인증 오류 뒤 남은 과제는 건너뛴다
+    assert codes.count("LLM-ERROR") == 1                  # 과제를 동시에 보내도 인증 오류는 한 번만 적는다
+    rfp, report, _ = _run(rfp_doc, profile, {"guideline": ["REFUSE"]})
+    codes = _codes(report)
+    assert "LLM-REFUSAL" in codes
     assert rfp.guideline.main_page_limit.value == 100 and len(rfp.requirements) == 5
 
 
@@ -443,3 +445,38 @@ def test_cost_estimate_from_audit(tmp_path):
     assert est.calls == 3 and est.unpriced == ["모르는-모델"]
     assert abs(est.usd - (first + 4.0)) < 1e-9
     assert estimate(audit, pricing, since_line=1).usd == 4.0 and audit_lines(audit) == 4
+
+
+class _SlowFake(FakeProvider):
+    """동시에 몇 개가 들어오는지 잰다(과제마다 걸리는 시간을 달리 해 끝나는 순서를 섞는다)."""
+
+    def __init__(self, responses) -> None:
+        import threading
+
+        super().__init__(responses)
+        self.lock = threading.Lock()
+        self.active = self.peak = 0
+
+    def complete(self, call, json_schema):
+        import time
+
+        with self.lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        time.sleep({"extract.guideline": 0.15, "extract.compliance": 0.05}.get(call.task, 0.01))
+        try:
+            return super().complete(call, json_schema)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_analysis_tasks_run_concurrently_in_fixed_report_order(rfp_doc, profile):
+    rfp, report = extract_rfp([rfp_doc], profile)
+    provider = _SlowFake({})                                         # 빈 응답 → 과제마다 스키마 오류
+    gateway = LLMGateway(provider)
+    llm_assist(rfp, [rfp_doc], profile, report, gateway, skip_tables=requirement_tables(rfp, [rfp_doc]))
+    assert provider.peak >= 2                                        # 과제들이 동시에(이 문서는 서술형 발췌가 없어 2개)
+    # 작성지침이 더 늦게 끝나도 결과는 과제 순서(작성지침 → 무효·감점)로 붙는다
+    errs = [f.message.split(":", 1)[0] for f in report.findings if f.code == "LLM-ERROR"]
+    assert errs == ["guideline", "compliance"]

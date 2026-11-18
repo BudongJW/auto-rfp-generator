@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from pydantic import BaseModel
@@ -159,7 +160,8 @@ class _Runner:
                 LLMCall(task=f"extract.{task}", system=SYSTEM, context=context, instruction=instruction,
                         schema=schema, effort=spec["effort"], max_tokens=int(spec["max_tokens"])), schema)
             for msg in self.gateway.retries[seen:]:          # 게이트웨이가 잘림 뒤 상한을 늘려 다시 보냈다
-                self.report.add("LLM-RETRY", "info", msg)
+                if msg.startswith(f"extract.{task}:"):        # 동시에 도는 다른 과제의 기록은 빼고
+                    self.report.add("LLM-RETRY", "info", msg)
             results.append(data)
         return results
 
@@ -451,23 +453,41 @@ TASKS = ("guideline", "compliance", "text_requirements")
 def llm_assist(rfp: Rfp, docs: list[Document], profile: Profile, report: ExtractionReport, gateway: LLMGateway,
                skip_tables: set[str] | None = None, tasks: tuple[str, ...] = TASKS) -> None:
     """LLM 보조 추출을 돌린다. 과제 하나가 실패해도 결정적 결과와 다른 과제는 그대로 둔다."""
-    run = _Runner(gateway, docs, report, profile)
     skip = skip_tables or set()
     steps = {
-        "guideline": lambda: assist_guideline(run, rfp, skip),
-        "compliance": lambda: assist_compliance(run, rfp, skip),
-        "text_requirements": lambda: assist_text_requirements(
+        "guideline": lambda run: assist_guideline(run, rfp, skip),
+        "compliance": lambda run: assist_compliance(run, rfp, skip),
+        "text_requirements": lambda run: assist_text_requirements(
             run, rfp, skip, profile.value("requirements.id_regex"), profile.value("ambiguity.vague_terms")),
     }
-    for name in tasks:
+
+    # 과제마다 고치는 곳이 다르다(작성지침 / 무효·감점·참가자격 / 요구사항). 동시에 돌리고 과제별 점검 결과는
+    # 따로 모았다가 정해진 순서로 붙인다(결과가 실행 순서에 따라 흔들리지 않게). 2026-11-17 실측: 직렬 7~10분.
+    def one(name: str) -> tuple[ExtractionReport, LLMError | None]:
+        sub = ExtractionReport()
         try:
-            steps[name]()
-        except LLMRefusal as exc:
-            report.add("LLM-REFUSAL", "warning", f"{exc} — 이 과제는 결정적 결과만 씁니다")
+            steps[name](_Runner(gateway, docs, sub, profile))
+            return sub, None
         except LLMError as exc:
+            return sub, exc
+
+    names = [n for n in tasks if n in steps]
+    if len(names) > 1:
+        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+            results = list(pool.map(one, names))
+    else:
+        results = [one(n) for n in names]
+    auth_reported = False
+    for name, (sub, exc) in zip(names, results, strict=True):
+        report.findings += sub.findings
+        if isinstance(exc, LLMRefusal):
+            report.add("LLM-REFUSAL", "warning", f"{exc} — 이 과제는 결정적 결과만 씁니다")
+        elif exc is not None:
+            auth = "인증" in str(exc) or "모델을 정하지 못했" in str(exc)
+            if auth and auth_reported:
+                continue                                     # 인증·모델 문제는 모든 과제에서 같다: 한 번만 적는다
+            auth_reported = auth_reported or auth
             report.add("LLM-ERROR", "warning", f"{name}: {exc} — 이 과제는 결정적 결과만 씁니다")
-            if "인증" in str(exc) or "모델을 정하지 못했" in str(exc):
-                break  # 인증·모델 문제는 다른 과제에서도 똑같이 실패한다
     u = gateway.usage
     report.stats.update({
         "llm_calls": u.calls, "llm_input_tokens": u.input_tokens, "llm_output_tokens": u.output_tokens,
