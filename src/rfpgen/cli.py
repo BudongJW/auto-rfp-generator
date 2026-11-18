@@ -357,19 +357,35 @@ def figures_cmd(
 def slides_cmd(
     project: Annotated[Path, typer.Argument(exists=True, file_okay=False)],
     style: Annotated[Path | None, typer.Option("--style")] = None,
+    kb: Annotated[Path | None, typer.Option("--kb", help="회사 KB 폴더(생략하면 지난번 폴더) — LLM 대본의 KB 값 가리기·채우기")] = None,
+    llm: Annotated[bool, typer.Option("--llm/--no-llm", help="발표 대본·예상 질문 답변을 LLM으로 씀(--llm-share-kb 필요)")] = False,
+    llm_model: Annotated[str | None, typer.Option("--llm-model")] = None,
+    llm_share_kb: Annotated[bool, typer.Option("--llm-share-kb", help="본문 초안(회사 내용)을 LLM에 보냄(KB 값은 토큰으로 가림)")] = False,
     profile_override: Annotated[list[Path] | None, typer.Option("--profile", "-p")] = None,
 ) -> None:
     """최신 절 초안으로 요약본(A4 가로)·발표자료(16:9) PPTX와 발표 대본·예상 질문을 만든다."""
     from .package import make_slides
 
+    provider = None
+    if llm:
+        from .llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(model=llm_model, share_internal=llm_share_kb)
+    audit_before = _audit_before(project)
     try:
-        res = make_slides(project, load_profile(overrides=profile_override or []), style_path=style)
+        kb = resolve_kb(project, kb)
+        res = make_slides(project, load_profile(overrides=profile_override or []), style_path=style, provider=provider,
+                          share_kb=llm_share_kb, kb_dir=kb)
     except FileNotFoundError as exc:
         typer.secho(f"오류: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
     typer.echo(f"요약본 {res.summary_slides}장: {res.summary}")
     typer.echo(f"발표자료 {res.presentation_slides}장: {res.presentation}")
-    typer.echo(f"대본·예상 질문: {res.script}")
+    typer.echo(f"대본·예상 질문{'(LLM)' if res.script_llm else ''}: {res.script}")
+    for n in res.notes:
+        typer.secho(f"  - {n}", fg=typer.colors.YELLOW)
+    if res.script_llm:
+        _echo_cost(project, load_profile(overrides=profile_override or []), audit_before)
 
 
 @app.command("package", rich_help_panel=STEPS)

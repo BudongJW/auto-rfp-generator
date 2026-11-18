@@ -64,9 +64,14 @@ class SlidesResult:
     script: Path
     summary_slides: int
     presentation_slides: int
+    script_llm: bool = False
+    notes: list[str] = field(default_factory=list)
 
 
-def make_slides(project: Path, profile: Profile, *, style_path: Path | None = None) -> SlidesResult:
+def make_slides(project: Path, profile: Profile, *, style_path: Path | None = None, provider=None, share_kb: bool = False,
+                kb_dir: Path | None = None) -> SlidesResult:
+    """요약본·발표자료 PPTX와 대본. provider가 있고 share_kb면 발표 대본·예상 질문 답변을 LLM으로 쓴다
+    (절 초안의 회사 내용을 보내므로 KB 공유 허용이 필요, KB 값은 토큰으로 가려 보낸다)."""
     rfp = _latest_rfp(project)
     outline = Outline.model_validate_json((project / "plan" / "outline.json").read_text(encoding="utf-8"))
     sb_path = project / "strategy" / "storyboard.json"
@@ -85,10 +90,31 @@ def make_slides(project: Path, profile: Profile, *, style_path: Path | None = No
                           figure_dir=fig_dir)
     p_specs = build_specs(rfp, outline, drafts, storyboard, title=title, mode="presentation", max_slides=pres_max,
                           figure_dir=fig_dir)
+    notes: list[str] = []
+    script_text = None
+    if provider is not None and not share_kb:
+        notes.append("발표 대본 LLM 작성은 본문 초안(회사 내용)을 보내므로 --llm-share-kb가 필요합니다 — 골격 대본을 만들었습니다")
+    elif provider is not None:
+        from ..llm import LLMError, LLMGateway
+        from .script_llm import llm_script, script_markdown_llm
+
+        kb = load_kb(kb_dir) if kb_dir else CompanyKB()
+        gateway = LLMGateway(provider, audit_path=project / "audit" / "llm_calls.jsonl")
+        try:
+            res = llm_script(p_specs, rfp, drafts, kb, gateway, profile, minutes=minutes,
+                             blind=bool(g.blind and g.blind.value))
+            for i, spec in enumerate(p_specs, start=1):
+                if res.notes.get(i):
+                    spec.notes = res.notes[i]                # 발표자 노트에도 넣는다
+            script_text = script_markdown_llm(p_specs, res, minutes=minutes, title=title)
+        except LLMError as exc:
+            notes.append(f"발표 대본 LLM 작성 실패 — 골격 대본을 만들었습니다: {exc}")
     n_s = render_deck(out / "summary.pptx", s_specs, style=style, mode="summary", title=title)
     n_p = render_deck(out / "presentation.pptx", p_specs, style=style, mode="presentation", title=title)
-    (out / "script.md").write_text(script_markdown(p_specs, rfp, drafts, minutes=minutes, title=title), encoding="utf-8")
-    return SlidesResult(out / "summary.pptx", out / "presentation.pptx", out / "script.md", n_s, n_p)
+    (out / "script.md").write_text(script_text or script_markdown(p_specs, rfp, drafts, minutes=minutes, title=title),
+                                   encoding="utf-8")
+    return SlidesResult(out / "summary.pptx", out / "presentation.pptx", out / "script.md", n_s, n_p,
+                        script_llm=script_text is not None, notes=notes)
 
 
 @dataclass

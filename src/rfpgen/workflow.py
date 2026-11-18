@@ -273,7 +273,7 @@ def run_start(files: list[Path], project: Path, profile: Profile, *, kb: Path | 
     step(3, "별지 서식", do_forms, skip="" if hwp else "HWP·HWPX 첨부가 없음")
 
     def do_slides():
-        r = make_slides(project, profile)
+        r = make_slides(project, profile, provider=provider if share_kb else None, share_kb=share_kb, kb_dir=kb)
         return f"요약본 {r.summary_slides}장, 발표자료 {r.presentation_slides}장"
 
     step(4, "요약본·발표자료", do_slides)

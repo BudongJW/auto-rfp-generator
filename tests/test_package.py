@@ -255,3 +255,56 @@ def test_cli_slides_and_package(drafted):
     r = CliRunner().invoke(app, ["package", str(project), "--kb", str(kb)])
     assert r.exit_code == 0, r.output
     assert "01_정성제안서.pdf" in r.output and "제출 전 점검표" in r.output
+
+
+class ScriptFake:
+    """발표 대본 과제: 장마다 대본, 예상 질문 둘(KB 토큰 포함)."""
+
+    name = "fake"
+
+    def __init__(self, allowed=("public", "internal")) -> None:
+        self.allowed_data_classes = set(allowed)
+        self.calls = []
+
+    def complete(self, call, json_schema):
+        from rfpgen.llm import ProviderReply
+
+        self.calls.append(call)
+        n = len(re.findall(r"^\[(\d+)\] ", call.instruction, re.M))
+        data = {"slides": [{"index": i, "script": f"{i}번 장 대본입니다."} for i in range(1, n + 1)],
+                "qa": [{"question": "투입 인력 규모는?", "answer": "정규직 개발 인력 {{fact:F-002}}을 확보하고 있습니다.",
+                        "basis": "Ⅱ.3"},
+                       {"question": "응답 시간 목표는?", "answer": "[확인 필요: 목표 응답 시간]", "basis": "Ⅴ.1"}]}
+        return ProviderReply(text=json.dumps(data, ensure_ascii=False), model="fake", stop_reason="end_turn",
+                             usage={"input_tokens": 10, "output_tokens": 10})
+
+
+def test_llm_script_masks_kb_values_and_needs_share(drafted, tmp_path):
+    import shutil
+
+    from pptx import Presentation
+
+    project, kb, profile = drafted
+    proj = tmp_path / "proj"
+    shutil.copytree(project, proj)
+    # 절 초안에 KB 값이 들어간 문장을 넣는다(실제 LLM 초안은 토큰이 값으로 바뀌어 저장된다)
+    sec = sorted(proj.glob("sections/S-4-1.v*.json"))[-1]
+    data = json.loads(sec.read_text(encoding="utf-8"))
+    data["head_message"] = "정규직 개발 인력 85명과 PM 경력 18년으로 기능 요구사항을 수행함"
+    sec.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    fake = ScriptFake(allowed=("public",))
+    res = make_slides(proj, profile, provider=fake, share_kb=False, kb_dir=kb)    # 공유 허용 없이는 보내지 않는다
+    assert not res.script_llm and not fake.calls and "--llm-share-kb" in res.notes[0]
+
+    fake = ScriptFake()
+    res = make_slides(proj, profile, provider=fake, share_kb=True, kb_dir=kb)
+    assert res.script_llm and len(fake.calls) == 1 and fake.calls[0].data_class == "internal"
+    sent = fake.calls[0].context + fake.calls[0].instruction
+    assert "85명" not in sent and "18년" not in sent                      # KB 값은 토큰으로 가려 보낸다
+    assert "{{fact:F-002}}" in sent and "{{kb:H-001.years}}년" in sent
+    script = res.script.read_text(encoding="utf-8")
+    assert "정규직 개발 인력 85명을 확보하고 있습니다." in script            # 받은 토큰은 값으로 바꾼다
+    assert "[확인 필요: 목표 응답 시간]" in script and "_(근거: Ⅱ.3)_" in script
+    pres = Presentation(str(res.presentation))
+    assert pres.slides[1].notes_slide.notes_text_frame.text == "2번 장 대본입니다."   # 발표자 노트에도
