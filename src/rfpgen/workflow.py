@@ -78,9 +78,40 @@ def _show(path: str | Path) -> str:
         return str(path)
 
 
-def project_status(project: Path) -> tuple[list[Stage], list[str]]:
-    """(단계 목록, 다음 할 일). 파일만 읽는다."""
+def _schedule_status(rfp: dict, project: Path, today: dt.date, package_done: bool) -> tuple[Stage, list[str]]:
+    """공고 일정 단계 줄과 날짜가 걸린 할 일(질의 마감·제출 마감)."""
+    from .extract.schedule import d_day, deadline, when
+    from .schemas.rfp import ScheduleItem
+
+    items = [ScheduleItem.model_validate(x) for x in (rfp.get("notice") or {}).get("schedule") or []]
+    questions = project / "out" / "questions.md"
+    n_q = len(re.findall(r"^\d+\. \*\*", questions.read_text(encoding="utf-8"), re.MULTILINE)) if questions.exists() else 0
+    todo: list[str] = []
+    dl = deadline(items)
+    asks = [x for x in items if x.kind == "질의" and x.due]
+    ask = max(asks, key=lambda x: x.due or "") if asks else None
+    if ask is not None and ask.due and ask.due[:10] >= today.isoformat() and n_q:
+        todo.append(f"질의 마감 {d_day(ask.due, today)}({when(ask.due)}): 발주기관 질의 {n_q}건을 정리해 보내세요 — "
+                    f"{project / 'out' / 'questions.md'}")
+    elif ask is None and n_q and not package_done:
+        todo.append(f"발주기관 질의 {n_q}건이 있습니다 — 공고의 질의 기간 안에 보내세요: {project / 'out' / 'questions.md'}")
+    if dl is not None and dl.due and dl.due[:10] >= today.isoformat() and not package_done:
+        days = (dt.date.fromisoformat(dl.due[:10]) - today).days
+        if days <= 3:
+            todo.insert(0, f"제출 마감 {d_day(dl.due, today)}({when(dl.due)}) — 제출 패키지를 먼저 만드세요")
+    if not items:
+        return Stage("schedule", "공고 일정", False, "찾지 못함 — 입찰공고문을 함께 넣으면 제출 마감·질의 기간을 읽습니다",
+                     "rfpgen analyze <RFP 파일> <입찰공고문>"), todo
+    shown = [x for x in items if x.kind in ("질의", "설명회", "제안서 제출", "입찰 마감", "제안서 평가")]
+    parts = [f"{x.kind} {when(x.due)} {d_day(x.due, today)}" for x in (shown or items)
+             if not (dl is not None and x.kind == "입찰 마감" and dl.kind == "제안서 제출" and x.due == dl.due)]
+    return Stage("schedule", "공고 일정", True, " · ".join(parts[:4]), "out/analysis.md의 '일정'"), todo
+
+
+def project_status(project: Path, today: dt.date | None = None) -> tuple[list[Stage], list[str]]:
+    """(단계 목록, 다음 할 일). 파일만 읽는다. today: 남은 날(D-day)을 셀 날(기본 오늘)."""
     project = Path(project)
+    today = today or dt.date.today()
     p = str(project)
     meta = _meta(project)
     kb_path = meta.get("kb")
@@ -103,6 +134,8 @@ def project_status(project: Path) -> tuple[list[Stage], list[str]]:
         stages.append(Stage("analyze", "RFP 분석", True, detail, f"rfpgen analyze <RFP 파일> -o {p}"))
         if errs:
             todo.append(f"분석 점검의 오류 {errs}건을 확인하세요: {project / 'out' / 'analysis.md'}")
+        sched_stage, sched_todo = _schedule_status(rfp, project, today, (project / "submission" / "manifest.json").exists())
+        stages.append(sched_stage)
     else:
         stages.append(Stage("analyze", "RFP 분석", False, "아직 없음", f"rfpgen analyze <RFP 파일> -o {p}"))
 
@@ -173,6 +206,9 @@ def project_status(project: Path) -> tuple[list[Stage], list[str]]:
             todo.append(f"제출 전 점검 blocker {blockers}건을 해결하세요: {project / 'submission' / '제출전점검표.md'}")
         if drafts and manifest.stat().st_mtime < newest_draft:
             todo.append(f"초안이 제출 패키지보다 새롭습니다 — `rfpgen package {p}`로 다시 만드세요")
+        if (project / "submission" / "조견표.xlsx").exists():
+            todo.append(f"조견표(평가항목별 쪽수)를 제출기한까지 나라장터에 등록하세요 — 최종 PDF로 쪽을 다시 확인: "
+                        f"{project / 'submission' / '조견표.xlsx'}")
     else:
         stages.append(Stage("package", "제출 패키지", False, "아직 없음", f"rfpgen package {p}{kb_opt}"))
 
@@ -188,9 +224,13 @@ def project_status(project: Path) -> tuple[list[Stage], list[str]]:
     except (GateError, OSError):
         nxt = None
 
-    # 다음 할 일: 아직 안 한 첫 단계 → 품질 할 일 → 승인
-    first = next((s for s in stages if not s.done and s.key not in ("gates",)), None)
+    # 다음 할 일: 날짜가 급한 일 → 아직 안 한 첫 단계 → 품질 할 일 → 승인
+    first = next((s for s in stages if not s.done and s.key not in ("gates", "schedule")), None)
     head: list[str] = []
+    if rfp_path:
+        urgent = [t for t in sched_todo if t.startswith("제출 마감")]
+        head += urgent
+        todo[:0] = [t for t in sched_todo if t not in urgent]
     if first is not None:
         if first.key == "kb":
             files = " ".join(i.get("file", "") for i in inputs) or "<RFP 파일>"

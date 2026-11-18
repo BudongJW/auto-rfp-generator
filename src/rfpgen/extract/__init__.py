@@ -10,6 +10,7 @@ from .compliance import extract_compliance, extract_eligibility, link_compliance
 from .evaluation import extract_evaluation
 from .guideline import extract_guideline
 from .notice import extract_notice
+from .schedule import extract_schedule
 from .requirements import RequirementExtractor
 
 _ROLE_ORDER = {"제안요청서": 0, "평가기준": 1, "과업지시서": 2, "입찰공고": 3, "별지서식": 4, "기타": 5}
@@ -34,6 +35,7 @@ def extract_rfp(docs: list[Document], profile: Profile) -> tuple[Rfp, Extraction
     report = ExtractionReport()
     rfp = Rfp(documents=[d.doc_id for d in ordered])
     rfp.notice = extract_notice(ordered, report)
+    rfp.notice.schedule = extract_schedule(ordered, report)
     rfp.evaluation = extract_evaluation(ordered, report)
     extractor = RequirementExtractor(profile.value("requirements.id_regex"))
     rfp.requirements = extractor.extract(ordered, report)

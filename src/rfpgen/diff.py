@@ -166,6 +166,20 @@ def diff_rfp(old: Rfp, new: Rfp, from_version: int, to_version: int,
         if _norm(va) != _norm(vb):
             d.changes.append(Change(target="notice", key=field, kind="changed", field=field, old=va or None, new=vb or None,
                                     high_risk=field in HIGH_RISK_FIELDS))
+    # 일정: 정정공고는 제출 마감·질의 기간을 자주 옮긴다 — 종류별로 맞대 본다
+    from .extract.schedule import span_text
+
+    o_s = {x.kind: x for x in old.notice.schedule}
+    n_s = {x.kind: x for x in new.notice.schedule}
+    for kind in dict.fromkeys([*o_s, *n_s]):
+        a, b = o_s.get(kind), n_s.get(kind)
+        if a is not None and b is not None and (a.start, a.end) == (b.start, b.end):
+            continue
+        d.changes.append(Change(target="notice", key=f"schedule.{kind}",
+                                kind="changed" if a and b else ("added" if b else "removed"), field="schedule",
+                                old=span_text(a) if a else None, new=span_text(b) if b else None,
+                                high_risk=kind in ("제안서 제출", "입찰 마감", "질의", "제안서 평가"),
+                                old_locators=a.locators[:1] if a else [], new_locators=b.locators[:1] if b else []))
 
     o_c = {_norm(c.text) for c in old.compliance if c.origin == "stated"}
     for c in new.compliance:

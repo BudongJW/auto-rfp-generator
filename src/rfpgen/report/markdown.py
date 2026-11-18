@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..extract.schedule import span_text
 from ..schemas.docir import Document
 from ..schemas.plan import Outline, PageBudget, Trace
 from ..schemas.rfp import ExtractionReport, Rfp
@@ -38,6 +39,20 @@ def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: 
     add(f"- 계약방법: {n.contract_method.value} (적용 프로필: `{profile_name}`)")
     ratio = ev.tech_price_ratio.value if ev.tech_price_ratio else None
     add(f"- 기술:가격 = {ratio[0]}:{ratio[1]}" if ratio else "- 기술:가격 = —(찾지 못함, 프로필 기본값 사용)")
+    add("")
+    add("## 일정")
+    add("")
+    if n.schedule:
+        add("| 일정 | 원문 이름표 | 날짜 | 원문 위치 |")
+        add("|---|---|---|---|")
+        for it in n.schedule:
+            lc = it.locators[0] if it.locators else None
+            where = lc.block_id + (f" p.{lc.page}" if lc.page else "") if lc else "-"
+            add(f"| {it.kind} | {it.label} | {span_text(it)} | {where} |")
+        add("")
+        add("> 정정공고로 바뀔 수 있습니다. 나라장터 공고의 일정을 기준으로 하세요. 남은 날은 `rfpgen status`가 보여 줍니다.")
+    else:
+        add("- 일정을 찾지 못했습니다 — 입찰공고문(제출 마감·질의 기간·설명회)을 함께 넣으면 읽습니다.")
     add("")
     add("## 작성지침")
     add("")
@@ -164,6 +179,9 @@ def questions_markdown(rfp: Rfp, from_drafts: list[tuple[str, str]] | None = Non
     title = rfp.notice.title.value if rfp.notice.title else "(사업명 미확인)"
     lines = [f"# 질의서 초안 — {title}", "",
              "> 자동 생성 초안입니다. 질의 기간과 제출 양식은 공고를 따르세요. 중복·불필요한 질의는 삭제하세요.", ""]
+    asks = [x for x in rfp.notice.schedule if x.kind in ("질의", "설명회")]
+    if asks:
+        lines[-1:-1] = [f"> {x.label}: {span_text(x)}" for x in asks]
     if from_drafts:
         lines += ["## RFP 분석에서 나온 질의", ""]
     for i, q in enumerate(rfp.questions, start=1):

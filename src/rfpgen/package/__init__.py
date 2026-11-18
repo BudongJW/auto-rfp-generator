@@ -279,7 +279,8 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
     (check_dir / f"{rep.run_id}.md").write_text(report_markdown(rep), encoding="utf-8")
 
     checklist = sub / "제출전점검표.md"
-    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind, bool(form_docs), crossref), encoding="utf-8")
+    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind, bool(form_docs), crossref, rfp.notice.schedule),
+                         encoding="utf-8")
     (sub / "manifest.json").write_text(json.dumps([
         {"doc_type": d.doc_type, "file": d.pdf.name, "pages": d.pages, "bytes": d.size_bytes, "source": str(d.source.name)}
         for d in docs], ensure_ascii=False, indent=2), encoding="utf-8")
@@ -364,8 +365,16 @@ def _package_forms(project: Path, sub: Path, raw_pdf: Path, title: str, rep: Che
 
 
 def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: int, blind: bool,
-               has_forms: bool = False, crossref: Path | None = None) -> str:
+               has_forms: bool = False, crossref: Path | None = None, schedule: list | None = None,
+               today: dt.date | None = None) -> str:
+    from ..extract.schedule import d_day, deadline, span_text, when
+
+    today = today or dt.date.today()
     total = sum(d.size_bytes for d in docs)
+    dl = deadline(schedule or [])
+    dates = ([f"- 제출 마감: {span_text(dl)} — 오늘({today.isoformat()}) 기준 {d_day(dl.due, today)}"] if dl else
+             ["- 제출 마감: 공고에서 찾지 못함 — 나라장터 공고의 제안서 제출 마감 일시를 확인하세요"])
+    dates += [f"- {x.label}: {span_text(x)}" for x in schedule or [] if x.kind == "제안서 평가"]
     lines = [f"# 제출 전 점검표 — {title}", "", f"점검 실행: {rep.run_id}", "",
              "| 문서구분(나라장터) | 파일 | 쪽수 | 용량 |", "|---|---|---|---|"]
     for d in docs:
@@ -373,7 +382,8 @@ def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: in
     lines += ["", f"- 총 용량: {total / 1024 / 1024:.2f}MB / 상한 {lim_mb}MB",
               f"- 점검: blocker {rep.count('blocker')}, major {rep.count('major')}, minor {rep.count('minor')} "
               f"(상세: `checks/{rep.run_id}.md`)",
-              f"- 블라인드 평가: {'예 — 본문·파일 정보·파일 이름에 회사 식별 표기가 없어야 합니다' if blind else '아니오'}", "",
+              f"- 블라인드 평가: {'예 — 본문·파일 정보·파일 이름에 회사 식별 표기가 없어야 합니다' if blind else '아니오'}",
+              *dates, "",
               "## 업로드 전 확인(사람)", "",
               "- [ ] blocker 0건을 확인했다(G5)",
               "- [ ] G1~G4 승인(`rfpgen gate`)을 마치고, 이 점검표를 확인한 뒤 G5를 승인했다",
@@ -384,7 +394,8 @@ def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: in
               ("- [ ] 조견표(목차·평가항목별 해당 쪽수)를 제출기한까지 시스템에 등록했다 — `submission/조견표.xlsx` "
                "(조달청 세부기준 제6조의2③, 쪽은 최종 PDF로 다시 확인)" if crossref else
                "- [ ] 조견표(목차·평가항목별 해당 쪽수)를 만들어 시스템에 등록했다(조달청 세부기준 제6조의2③)"),
-              "- [ ] 임시저장 때 파일이 암호화되고 최종 제출 뒤에는 수정·재제출할 수 없음을 알고 마감 전에 여유 있게 제출했다",
+              "- [ ] 임시저장 때 파일이 암호화되고 최종 제출 뒤에는 수정·재제출할 수 없음을 알고 마감"
+              + (f"({when(dl.due)})" if dl else "") + " 전에 여유 있게 제출했다",
               "- [ ] PDF를 열어 표·그림·글꼴이 깨지지 않았는지 쪽마다 확인했다(서버 렌더는 한글 화면과 다를 수 있음)",
               "", "확인자: ________________  일시: ________________", ""]
     return "\n".join(lines)

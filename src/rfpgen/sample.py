@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 OVERVIEW_LINES = [
@@ -153,7 +154,23 @@ def _add_forms(doc) -> None:
     add_table(doc, [["사업명", ""], ["하도급 부분", ""], ["하도급 업체", ""]], {})
 
 
-def build_sample_rfp(path: Path, *, with_forms: bool = True) -> Path:
+def schedule_table(today: dt.date) -> list[list[str]]:
+    """체험용 일정표: 만든 날을 기준으로 질의·설명회·제출 마감·평가 날짜를 잡는다(남은 날 안내를 해 볼 수 있게)."""
+
+    def d(days: int) -> str:
+        x = today + dt.timedelta(days=days)
+        while x.weekday() >= 5:                        # 주말이면 다음 월요일
+            x += dt.timedelta(days=1)
+        return f"{x.year}. {x.month}. {x.day}.({'월화수목금토일'[x.weekday()]})"
+
+    return [["구분", "일시", "장소·방법"],
+            ["질의 기간", f"{d(1)} 09:00 ~ {d(6)} 18:00", "나라장터 공고 질의"],
+            ["제안요청 설명회", f"{d(3)} 14:00", "가상시청 별관 2층 회의실"],
+            ["제안서 제출 마감", f"{d(12)} 10:00", "국가종합전자조달시스템(나라장터)"],
+            ["제안서 평가(발표)", f"{d(15)} 예정", "일시·장소는 개별 통보"]]
+
+
+def build_sample_rfp(path: Path, *, with_forms: bool = True, today: dt.date | None = None) -> Path:
     """가상 제안요청서 HWPX를 만든다."""
     from hwpx import HwpxDocument
 
@@ -176,6 +193,8 @@ def build_sample_rfp(path: Path, *, with_forms: bool = True) -> Path:
     add_table(doc, EVAL_QUANT, EVAL_QUANT_SPANS)
     doc.add_paragraph("나. 정성적 평가(70점)")
     add_table(doc, EVAL_QUAL, EVAL_QUAL_SPANS)
+    doc.add_paragraph("3. 제안서 제출 일정")
+    add_table(doc, schedule_table(today or dt.date.today()), {})
     if with_forms:
         _add_forms(doc)
     path = Path(path)
@@ -185,4 +204,5 @@ def build_sample_rfp(path: Path, *, with_forms: bool = True) -> Path:
 
 
 __all__ = ["DECLARED_TABLE", "DETAILS", "EVAL_QUAL", "EVAL_QUAL_SPANS", "EVAL_QUANT", "EVAL_QUANT_SPANS", "GUIDE_LINES",
-           "OVERVIEW_LINES", "SUMMARY_SPANS", "SUMMARY_TABLE", "add_table", "build_sample_rfp", "detail_table"]
+           "OVERVIEW_LINES", "SUMMARY_SPANS", "SUMMARY_TABLE", "add_table", "build_sample_rfp", "detail_table",
+           "schedule_table"]

@@ -15,6 +15,24 @@ EvalKind = Literal["정량", "정성", "미정"]
 DetailGrade = Literal["S", "A", "B", "C", "D"]
 
 
+ScheduleKind = Literal["참가 등록", "설명회", "질의", "제안서 제출", "입찰 마감", "개찰", "제안서 평가"]
+
+
+class ScheduleItem(BaseModel):
+    """공고 일정 한 줄. 날짜는 ISO 문자열(YYYY-MM-DD 또는 YYYY-MM-DDTHH:MM)."""
+
+    kind: ScheduleKind
+    label: str                       # 원문 이름표('제안서 제출 마감')
+    start: str | None = None
+    end: str | None = None           # 기간이면 끝
+    text: str = ""                   # 원문 값
+    locators: list[Locator] = Field(default_factory=list)
+
+    @property
+    def due(self) -> str | None:
+        return self.end or self.start
+
+
 class Notice(BaseModel):
     bid_no: Extracted[str] | None = None
     title: Extracted[str] | None = None
@@ -24,6 +42,7 @@ class Notice(BaseModel):
     contract_method: Extracted[ContractMethod] = Field(
         default_factory=lambda: Extracted[ContractMethod](value="미확인", confidence=0.0)
     )
+    schedule: list[ScheduleItem] = Field(default_factory=list)
 
 
 class EvalItem(BaseModel):
