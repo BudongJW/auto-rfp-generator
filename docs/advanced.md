@@ -40,6 +40,20 @@ llm:
 
 단가는 Anthropic 공개 가격표를 따르고, 실제 청구액은 Console에서 확인합니다.
 
+## LLM 절 초안 분량 보강
+
+Claude가 쓴 절이 목표 최소 글자 수(쪽수 예산에서 계산)의 0.8배보다 짧으면, 1차 초안을 주고 한 번 더 써서 보강합니다(호출이 하나 늘어남). 끄거나 기준을 바꾸려면 조직 프로필에 적습니다.
+
+```yaml
+llm:
+  tasks:
+    value:
+      section: {effort: high, max_tokens: 32000, runs: 1, expand_below: 0}   # 0이면 보강하지 않음
+    status: user
+```
+
+`llm.tasks`는 과제 묶음 전체를 덮어쓰므로, 바꾸지 않는 과제도 `rfpgen profile`에 나온 값 그대로 함께 적습니다.
+
 ## 산출물 형식(개발·연동용)
 
 | 파일 | 내용 |
