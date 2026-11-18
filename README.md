@@ -185,7 +185,7 @@ uv run rfpgen status projects/제안요청서
 | 확인할 것 | 파일 | 고친 뒤 실행 |
 |---|---|---|
 | 평가표·요구사항·작성지침이 원문과 맞는지 | `out/analysis.md`, `out/analysis.xlsx` | — |
-| 발주기관에 물어볼 모호한 요구사항 | `out/questions.md` | — |
+| 발주기관에 물어볼 것(모호한 요구사항, 초안을 쓰며 나온 확인 사항) | `out/questions.md` | 초안을 다시 쓰면 함께 갱신 |
 | 장별 핵심 메시지·필요한 근거(스토리보드) | `strategy/storyboard.json`(`.md`는 읽기용) | `rfpgen draft 프로젝트` |
 | 본문의 `[확인 필요]` 자리 | `out/proposal.hwpx`, `out/trace_draft.xlsx` | 한글에서 직접 고치거나 KB를 채우고 `rfpgen draft` |
 | 도식 내용 | `strategy/figures/<id>.auto.json` → `<id>.json`으로 복사해 수정 | `rfpgen figures 프로젝트` |

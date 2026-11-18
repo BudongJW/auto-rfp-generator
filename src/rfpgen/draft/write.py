@@ -31,7 +31,7 @@ from ..schemas.draft import (
 from ..schemas.kb import CompanyKB
 from ..schemas.plan import OutlineNode
 from .context import DraftInputs, kb_catalog, leaf_sections, outline_text, relevant_content, rfp_brief, section_text
-from .tokens import PLACEHOLDER, apply_tokens, placeholder_topic, similar_topic
+from .tokens import PLACEHOLDER, apply_tokens, open_items, placeholder_topic, similar_topic
 
 _NEEDS_BY_CANONICAL = {
     "제안업체일반": ["회사 일반현황(설립·인원·매출)", "유사사업 수행 실적", "보유 인증"],
@@ -156,6 +156,37 @@ _CATEGORIES = [
     ("기술", re.compile(r"방법론|도구|솔루션|제품|규격|프레임워크|아키텍처|플랫폼")),
 ]
 _CATEGORY_ORDER = ["실적", "인력", "인증", "재무", "회사", "기술", "기타", "발주기관 확인"]
+
+
+# 초안의 [확인 필요] 중 발주기관만 답할 수 있는 것(목표치·기준·범위·현황·용량·연계 규격 등). 회사 쪽 내용은 뺀다.
+_COMPANY_TOPIC = re.compile(r"당사|제안사|인력|PM|PL|경력|실적|인증|자격|투입|이력|조직|매출|차별화|win\s*theme")
+_AGENCY_TOPIC = re.compile(r"발주\s*기관|현행|목표\s*(치|값|수준)?|측정\s*(기준|조건)|기준|범위|규격|한도|보관\s*기간|대상|연계"
+                           r"|일정|기간|현황|용량|형식|지침|표준")
+
+
+def is_agency_topic(topic: str) -> bool:
+    return not _COMPANY_TOPIC.search(topic) and bool(_AGENCY_TOPIC.search(topic))
+
+
+def draft_questions(drafts: list[SectionDraft], sb: Storyboard | None) -> list[tuple[str, str]]:
+    """(절, 확인할 내용): LLM 절 초안의 [확인 필요] 중 발주기관에 물을 것과 스토리보드의 '발주기관 확인' 자료 요청.
+    표현만 다른 것은 하나로 묶는다."""
+    out: list[tuple[str, str]] = []
+
+    def add(where: str, topic: str) -> None:
+        if topic and not any(similar_topic(topic, t) for _, t in out):
+            out.append((where, topic))
+
+    for d in drafts:
+        if d.origin != "llm":
+            continue
+        for topic in open_items(d.placeholders):
+            if is_agency_topic(topic):
+                add(f"{d.number} {d.title}", topic)
+    for r in (sb.data_requests if sb else []):
+        if r.category == "발주기관 확인":
+            add(r.section_title, r.need)
+    return out
 
 
 def _category(need: str) -> str:

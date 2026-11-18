@@ -384,13 +384,18 @@ class MissingInfoFake(WriterFake):
                              usage=reply.usage)
 
 
-def test_missing_info_not_repeated_and_items_counted(project, kb_dir, profile):
+def test_missing_info_not_repeated_and_agency_questions(project, kb_dir, profile):
     from rfpgen.draft.tokens import open_items
 
     res = run_draft(project, profile, kb_dir=kb_dir, provider=MissingInfoFake())
     func = next(d for d in res.drafts if d.title == "기능 요구사항")
     notes = [b.text for b in func.blocks if b.kind == "note"]
     assert notes == ["[확인 필요: 첨부파일 저장소 가용 용량]"]          # 본문과 같은 내용은 다시 넣지 않는다
+    # 발주기관에 물을 확인 사항은 질의서 초안에 덧붙는다(절이 달라도 같은 내용은 한 번)
+    q = (project / "out" / "questions.md").read_text(encoding="utf-8")
+    assert "## 초안을 쓰며 나온 확인 사항" in q
+    assert q.count("상향 후 첨부파일 용량 기준을 구체적으로 알려 주시기 바랍니다.") == 1
+    assert "첨부파일 저장소 가용 용량을 구체적으로 알려 주시기 바랍니다." in q
     assert open_items(["[확인 필요: 응답 시간 목표(PER-001)]", "[확인 필요: 응답 시간 목표 및 측정 기준]",
                        "[확인 필요: PM 경력·자격]", "[확인 필요: 개발 리더 경력·자격]"]) == [
         "응답 시간 목표", "PM 경력·자격", "개발 리더 경력·자격"]

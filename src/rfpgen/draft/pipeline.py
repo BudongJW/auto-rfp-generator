@@ -14,6 +14,7 @@ from ..kb import load_kb
 from ..llm import LLMError, LLMGateway
 from ..profile import Profile
 from ..render.hwpx_writer import load_style, render_proposal
+from ..report.markdown import questions_markdown
 from ..report.xlsx import write_trace_workbook
 from ..schemas.draft import CheckReport, SectionDraft, Storyboard
 from ..schemas.kb import CompanyKB
@@ -21,7 +22,7 @@ from ..schemas.plan import Outline, PageBudget, Trace
 from ..schemas.rfp import Rfp
 from .context import DraftInputs, load_overview
 from .tokens import PLACEHOLDER, apply_tokens
-from .write import data_requests, llm_storyboard, skeleton_storyboard, write_sections
+from .write import data_requests, draft_questions, llm_storyboard, skeleton_storyboard, write_sections
 
 
 @dataclass
@@ -185,6 +186,8 @@ def _publish(project: Path, inp: DraftInputs, profile: Profile, drafts: list[Sec
     render_proposal(out_path, outline, drafts, title=title, blind=blind, style=style,
                     min_body_pt=g.min_font_pt.value if g.min_font_pt else None, min_table_pt=min_table,
                     requirement_names={r.id: r.name for r in rfp.requirements}, figures=figs)
+    asks = draft_questions(drafts, sb)
+    (project / "out" / "questions.md").write_text(questions_markdown(rfp, from_drafts=asks), encoding="utf-8")
     trace_xlsx = project / "out" / "trace_draft.xlsx"
     write_trace_workbook(trace_xlsx, outline, trace, sb.data_requests)
 

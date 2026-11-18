@@ -151,10 +151,21 @@ def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: 
     return "\n".join(lines)
 
 
-def questions_markdown(rfp: Rfp) -> str:
+def _object_particle(word: str) -> str:
+    """목적격 조사: 받침이 있으면 '을', 없으면 '를'(한글이 아니면 '을(를)')."""
+    last = word.rstrip(" )]")[-1:] if word.strip() else ""
+    if last and "가" <= last <= "힣":
+        return "을" if (ord(last) - 0xAC00) % 28 else "를"
+    return "을(를)"
+
+
+def questions_markdown(rfp: Rfp, from_drafts: list[tuple[str, str]] | None = None) -> str:
+    """질의서 초안. from_drafts: (절, 확인할 내용) — 초안을 쓰며 나온 발주기관 확인 사항(rfpgen draft가 덧붙임)."""
     title = rfp.notice.title.value if rfp.notice.title else "(사업명 미확인)"
     lines = [f"# 질의서 초안 — {title}", "",
              "> 자동 생성 초안입니다. 질의 기간과 제출 양식은 공고를 따르세요. 중복·불필요한 질의는 삭제하세요.", ""]
+    if from_drafts:
+        lines += ["## RFP 분석에서 나온 질의", ""]
     for i, q in enumerate(rfp.questions, start=1):
         where = ""
         if q.locators:
@@ -162,5 +173,13 @@ def questions_markdown(rfp: Rfp) -> str:
             where = f" _(원문: {lc.doc_id}{f' p.{lc.page}' if lc.page else ''})_"
         lines.append(f"{i}. **{q.target}** — {q.issue}")
         lines.append(f"   - {q.question}{where}")
+    if from_drafts:
+        lines += ["", "## 초안을 쓰며 나온 확인 사항", "",
+                  "본문 초안에서 RFP로 정할 수 없어 `[확인 필요]`로 남긴 것 중 발주기관에 물어볼 것입니다. "
+                  "질의 마감 전에 묻고, 답을 받으면 본문의 해당 자리를 고치세요.", ""]
+        start = len(rfp.questions)
+        for k, (where, topic) in enumerate(from_drafts, start=start + 1):
+            lines.append(f"{k}. **{where}** — {topic}")
+            lines.append(f"   - {topic}{_object_particle(topic)} 구체적으로 알려 주시기 바랍니다.")
     lines.append("")
     return "\n".join(lines)
