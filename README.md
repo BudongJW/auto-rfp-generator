@@ -9,6 +9,10 @@
 
 모든 결과는 **사람이 검토하고 고치는 초안**입니다. 근거 없는 수치는 지어내지 않고 `[확인 필요]`로 남기며, 나라장터 업로드와 최종 판단은 사람이 합니다.
 
+![rfpgen start 실행 화면](docs/images/terminal-start.png)
+
+<sub>체험용 가상 제안요청서로 `rfpgen sample` → `rfpgen start`를 실행한 화면입니다. 분석·초안·별지·장표·제출 패키지를 차례로 만들고, 끝에 진행 상태와 다음 할 일을 알려 줍니다. 만들어지는 문서는 [결과물 예시](#결과물-예시)에 있습니다.</sub>
+
 ---
 
 ## 1. 설치 (처음 한 번)
@@ -70,6 +74,50 @@ uv run rfpgen start 예제_제안요청서.hwpx
 - `out/proposal.hwpx`: 본문 초안(한글에서 열기)
 - `submission/제출전점검표.md`: 제출 전 확인 목록
 
+### 결과물 예시
+
+아래는 모두 같은 가상 제안요청서로 만든 결과입니다. 회사 정보는 `rfpgen kb init`의 예시 값이고, 본문 두 절(사업 이해도·기능 요구사항)만 `--llm`으로 Claude가 썼습니다.
+
+**본문 초안** — `out/proposal.hwpx`를 제출용 PDF로 바꾼 쪽입니다. 절 첫머리의 거버닝 메시지 상자, 표, 자동 도식, 절 끝의 요구사항 대응표가 보입니다. 셋째 쪽의 '2. 보안 요구사항'처럼 키 없이 만든 절은 `[확인 필요]`가 든 작성용 골격입니다.
+
+![본문 초안 세 쪽](docs/images/proposal-pages.png)
+
+**도식** — RFP의 사업 기간·요구사항과 KB로 그립니다. 내용은 `strategy/figures/<id>.json`으로 고칠 수 있습니다.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/figure-flow.png" alt="단계별 추진 절차와 산출물"></td>
+    <td width="50%"><img src="docs/images/figure-layers.png" alt="목표 시스템 구성도"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>추진 절차와 단계별 산출물</sub></td>
+    <td align="center"><sub>목표 시스템 구성도(요구사항에서 뽑은 기능·데이터·보안)</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/figure-gantt.png" alt="사업 추진 일정"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>사업 추진 일정(사업 기간 8개월에 맞춤)</sub></td>
+  </tr>
+</table>
+
+**요약본·발표자료** — 평가항목 태그, 요구사항 ID 칩, 거버닝 메시지, 개조식 본문, 도식이 정해진 자리에 놓입니다. 발표 대본은 발표자 노트와 `out/script.md`에 들어갑니다.
+
+![요약본(A4 가로)과 발표자료(16:9) 장표](docs/images/slides.png)
+
+**별지 서식** — 공고에 붙은 서식을 서식별 파일로 떼어 KB 값으로 채웁니다. 실적 표는 행을 늘리고 합계를 다시 계산합니다.
+
+<table>
+  <tr>
+    <td width="55%"><img src="docs/images/form-application.png" alt="별지 제1호 입찰참가신청서"></td>
+    <td width="45%"><img src="docs/images/form-records.png" alt="별지 제4호 유사사업 수행실적"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>입찰참가신청서</sub></td>
+    <td align="center"><sub>유사사업 수행실적(합계 자동 계산)</sub></td>
+  </tr>
+</table>
+
 ---
 
 ## 3. 실제 공고로 쓰기
@@ -117,7 +165,13 @@ uv run rfpgen start 제안요청서.hwp 공고문.pdf 별지서식.hwp --kb kb
 uv run rfpgen status projects/제안요청서
 ```
 
-지금 단계와 다음 할 일을 알려 줍니다. 주로 이 순서로 손봅니다.
+지금 단계와 다음 할 일을 알려 줍니다.
+
+![rfpgen status 실행 화면](docs/images/terminal-status.png)
+
+<sub>예제에서 두 절을 Claude로 다시 쓴 뒤의 상태입니다. LLM도 근거(KB 값)가 없으면 수치를 지어내지 않고 `[확인 필요]`로 남기므로, 채울 자리가 늘어날 수 있습니다.</sub>
+
+주로 이 순서로 손봅니다.
 
 | 확인할 것 | 파일 | 고친 뒤 실행 |
 |---|---|---|
@@ -193,6 +247,13 @@ uv run rfpgen start 제안요청서.hwp --kb kb --llm
 | `rfpgen profile` | 배점·쪽수 등 제도 기준값과 근거 법령 |
 
 명령마다 `--help`로 옵션을 볼 수 있습니다(예: `rfpgen draft --help`).
+
+<details>
+<summary><code>rfpgen --help</code> 화면 보기</summary>
+
+![rfpgen --help 실행 화면](docs/images/terminal-help.png)
+
+</details>
 
 ---
 
