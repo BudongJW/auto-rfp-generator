@@ -16,7 +16,7 @@ from ..schemas.rfp import ExtractionReport, ScheduleItem, ScheduleKind
 from .common import build_grids, iter_lines, loc
 
 _DOW = r"(?:\s*\(\s*[월화수목금토일]\s*\))?"
-_TIME = r"(?:\s*(?P<ap{n}>오전|오후)?\s*(?P<h{n}>\d{{1,2}})\s*(?::|시)\s*(?P<mi{n}>\d{{2}})?\s*(?:분)?)?"
+_TIME = r"(?:(?:\s*,)?\s*(?P<ap{n}>오전|오후)?\s*(?P<h{n}>\d{{1,2}})\s*(?::|시)\s*(?P<mi{n}>\d{{2}})?\s*(?:분)?)?"  # '(금), 11:00'도
 _FULL = (r"(?P<y{n}>20\d{{2}})\s*(?:년|[.\-/])\s*(?P<m{n}>\d{{1,2}})\s*(?:월|[.\-/])\s*(?P<d{n}>\d{{1,2}})\s*(?:일|\.)?"
          + _DOW + _TIME)
 _PART = r"(?P<m{n}>\d{{1,2}})\s*(?:월|[.\-/])\s*(?P<d{n}>\d{{1,2}})\s*(?:일|\.)?" + _DOW + _TIME
@@ -29,24 +29,30 @@ END = re.compile(_SEP + r"(?:" + _FULL.format(n=2) + r"|" + _PART.format(n=3) + 
 # 이름표 → 종류. 위에서부터 고른다('제안서 평가(발표·질의응답)'은 평가, '입찰서 제출 마감'은 입찰 마감)
 _KINDS: list[tuple[ScheduleKind, re.Pattern[str]]] = [
     ("설명회", re.compile(r"설명회")),
-    ("제안서 평가", re.compile(r"제안서?\s*(?:평가|발표)|발표\s*(?:평가|일|일시|일정)|기술\s*(?:능력\s*)?평가"
+    ("제안서 평가", re.compile(r"제안서?\s*(?:설명\s*(?:및|·|,)?\s*)?(?:평가|발표)|발표\s*(?:평가|일|일시|일정)|기술\s*(?:능력\s*)?평가"
                            r"|^[\W\d]*평가\s*(?:일시|일정|예정)")),
     ("질의", re.compile(r"질의|질문|이의\s*(?:신청|제기)")),
     ("개찰", re.compile(r"개찰")),
     ("참가 등록", re.compile(r"참가\s*(?:자격\s*)?(?:등록|신청)")),
     ("제안서 제출", re.compile(r"제안서\s*(?:등\s*|및\s*\S{1,10}\s*)?(?:제출|접수|마감)"
+                           r"|(?:입찰|참가|제안)[^:：]{0,12}?서류[^:：]{0,16}?(?:제출|접수)\s*(?:마감|기한|일시)"
                            r"|^[\W\d]*(?:서류\s*)?제출\s*(?:마감|기한|일시|기간)")),     # '산출물 제출 기한'은 아니다
-    ("입찰 마감", re.compile(r"입찰\s*(?:서\s*)?(?:제출\s*)?마감|투찰|가격\s*(?:입찰|제안)\s*서?\s*(?:제출|마감)|입찰\s*서\s*제출")),
+    ("입찰 마감", re.compile(r"입찰\s*(?:서\s*)?(?:제출\s*)?마감|투찰|가격\s*(?:입찰|제안)\s*서?\s*(?:제출|마감)"
+                         r"|입찰\s*서\s*(?:제출|접수)")),
 ]
 _SENTENCE_SUBMIT = re.compile(r"제안서.{0,40}?까지.{0,30}?제출")
-_LEAD = re.compile(r"^(?:[\s○◦ㅇ\-□•·▪■◎※*]+|(?:\d{1,2}|[가-하])[.)]\s*)+")
+_LEAD = re.compile(r"^(?:[\s○◦ㅇ〇❍\-□•·▪■◎※*\u2460-\u2473]+|(?:\d{1,2}|[가-하])[.)]\s*)+")
+# 날짜 앞이 법령·고시 인용이면 일정이 아니다: '고시(제2021-98호, 2021. 12. 30)', '예규 제198호, 2022.01.11.'
+_CITE = re.compile(r"고시|예규|훈령|지침|규정|법률|시행령|시행규칙|개정|제\s*\d{2,4}(?:\s*-\s*\d+)?\s*호")
 ORDER: list[ScheduleKind] = ["참가 등록", "설명회", "질의", "제안서 제출", "입찰 마감", "개찰", "제안서 평가"]
 
 
 def _kind(label: str) -> ScheduleKind | None:
-    label = label.strip()
+    """이름표의 일정 종류. 앞 기호·번호('가.')를 떼고, 괄호 안을 뺀 글자('입찰서(가격) 마감일시')로도 본다."""
+    label = _LEAD.sub("", label.replace("\n", " ").strip())
+    flat = re.sub(r"\([^)]*\)", " ", label)
     for kind, pat in _KINDS:
-        if pat.search(label):
+        if pat.search(label) or pat.search(flat):
             return kind
     return None
 
@@ -93,13 +99,17 @@ def _candidates(doc: Document):
     for grid in build_grids(doc):
         for r in range(grid.n_rows):
             cells = grid.row_cells(r)
-            if len(cells) < 2:
-                continue
-            for i, cell in enumerate(cells[1:], start=1):
-                if DATE.search(cell.text):
-                    label = " ".join(c.text for c in cells[:i]).replace("\n", " ")
-                    yield cell, cell.text.replace("\n", " "), label
-                    break
+            for i, cell in enumerate(cells):
+                if not DATE.search(cell.text):
+                    continue
+                # 이름표: 바로 왼쪽 칸('… 개시일시 | 날짜 | … 마감일시 | 날짜'처럼 한 행에 둘일 수 있다),
+                # 왼쪽도 날짜면 같은 열의 머리글(첫 행)
+                label = cells[i - 1].text if i > 0 and not DATE.search(cells[i - 1].text) else ""
+                if not label and r > 0 and cell.cell is not None:
+                    head = grid.text(0, cell.cell.col)
+                    label = head if not DATE.search(head) else ""
+                if label.strip():
+                    yield cell, cell.text.replace("\n", " "), label.replace("\n", " ")
 
 
 def extract_schedule(docs: list[Document], report: ExtractionReport) -> list[ScheduleItem]:
@@ -110,7 +120,10 @@ def extract_schedule(docs: list[Document], report: ExtractionReport) -> list[Sch
             if start is None:
                 continue
             head = label if label is not None else text[:at]
-            kind = _kind(head) if len(head) <= 60 else None
+            body = _LEAD.sub("", re.sub(r"[\s~∼～]+$", "", head))
+            # 본문 줄은 '이름표: 날짜' 꼴이거나 짧은 이름표만 받는다(긴 문장 속 날짜는 일정이 아니다)
+            labelled = label is not None or body.endswith((":", "：")) or len(body) <= 30
+            kind = _kind(head) if labelled and len(head) <= 60 and not _CITE.search(head) else None
             if kind is None and label is None and _SENTENCE_SUBMIT.search(text):
                 kind = "제안서 제출"
             if kind is None:

@@ -185,3 +185,49 @@ def test_suggest_due():
     sun = [DataRequest(section_id="s", section_title="t", need="x", category="실적")]
     suggest_due(sun, [ScheduleItem(kind="제안서 제출", label="마감", start="2026-12-06")], today=DAY)
     assert sun[0].due == "2026-11-27"                                            # 11-29(일) → 앞 금요일
+
+
+def _hwpx_doc(tmp_path, paragraphs: list[str], tables: list[list[list[str]]]) -> Document:
+    from hwpx import HwpxDocument
+
+    from rfpgen.parse import InputFile, parse_document
+    from rfpgen.sample import add_table
+
+    doc = HwpxDocument.new()
+    for t in paragraphs:
+        doc.add_paragraph(t)
+    for rows in tables:
+        add_table(doc, rows, {})
+    path = tmp_path / "공고.hwpx"
+    doc.save_to_path(str(path))
+    return parse_document(InputFile(path.name, path.read_bytes()), "d1")
+
+
+def test_real_notice_phrasings(tmp_path):
+    """공개 입찰공고문(2024~2025, 기관 누리집 게시본)에서 본 문구·표 모양. 원문 파일은 저장소에 넣지 않았다."""
+    doc = _hwpx_doc(tmp_path, [
+        "가. 입찰 관련 서류(제안서 포함) 제출 마감 일시: 2025.04.07.(월) 11:00까지",
+        "다. 사업기간: 계약체결일로부터 2025.11.21.까지",
+        "※ 제안서 기술평가는 행정안전부에서 고시(제2021-3호, 2021.1.19.)한 「행정기관 및 공공기관 정보시스템 구축·운영 지침」을 준용함",
+        "○ 1차 납품: 2025년 9월 29일까지",
+        "나. 협상절차는 지방자치단체 입찰시 낙찰자 결정기준(행정안전부 예규 제198호, 2022.01.11.)에 의함",
+    ], [
+        [["입찰서(가격)\n접수 개시일시", "2025.05.14.(수)\n16:00", "입찰서\n(가격)마감일시", "2025.05.27.(화)\n15:00"],
+         ["개찰일시", "규격(기술)입찰 평가 후 개찰", "개찰장소", "국가종합전자조달시스템"]],
+        [["구분", "추진일정", "비고"],
+         ["① 입찰 공고", "2025.06.18.(수) ~ 2025.06.30.(월) 17:00", "누리집"],
+         ["② 입찰 참가서류 및\n제안서 접수", "2025.06.30.(월)\n14:00~17:00", "직접 방문 제출"],
+         ["③ 제안서 설명 및 평가", "2025.07.04.(금) 14:00(예정)", "변경 가능"],
+         ["④ 협상 및 계약 체결", "추후 통보", ""]],
+    ])
+    got = [(x.kind, x.start, x.end) for x in extract_schedule([doc], ExtractionReport())]
+    assert got == [
+        ("제안서 제출", "2025-04-07T11:00", None),
+        ("입찰 마감", "2025-05-14T16:00", "2025-05-27T15:00"),     # 한 행의 개시·마감 두 쌍을 한 기간으로
+        ("제안서 제출", "2025-06-30T14:00", "2025-06-30T17:00"),
+        ("제안서 평가", "2025-07-04T14:00", None),
+    ]
+    rest = extract_schedule([_doc(["가. 제출 마감 일시: 2025.08.29.(금), 11:00까지",
+                                   "가. 입찰 접수(입찰참가서류 및 제안서 등 제출) 마감일시: ~2024.07.15.(월), 11:00까지"])],
+                            ExtractionReport())
+    assert [(x.kind, x.due) for x in rest] == [("제안서 제출", "2024-07-15T11:00"), ("제안서 제출", "2025-08-29T11:00")]
