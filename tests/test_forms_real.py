@@ -32,6 +32,7 @@ FIXTURES = {
     "별지14_소프트웨어사업하도급계획서.hwp": "65498a5988c6474093bd55a564440dc74140a1430fdbbc92df1c891a58558559",
     "별지15_수행실적총괄표.hwp": "18d8d3dd003fad21fb865593f486fc38dbf634ef708975ca062a6980001b0400",
     "별지16_수행실적증명서.hwp": "3b3f18ad814e0ccd55aa66ada455b77560834a726d8fcd3ea1a77425a533c8e2",
+    "별지17_상용SW제품별하도급계획서.hwp": "e3195454093366a9220fc486bd159da517a05298eafd6b8a61d0ba73807e2d3e",
     "별지19_국산제품활용계획서.hwp": "97570bdb88d16dbff36b0b0c7f8b8efdf956b44883a97598a449f74e8bcd0b49",
     "별지21_입찰업체서약서.hwp": "dbb90e7458891c748204dbc4ad4296155a1a165557eadb290589b0d754028564",
 }
@@ -140,7 +141,7 @@ def test_refit_line_cache_keeps_one_line_only_when_it_fits():
 
 def test_real_forms_skip_non_bidder_form(real_forms):
     project, rep = real_forms
-    assert [f.key for f in rep.forms] == ["1", "2", "4", "7", "9", "14", "15", "16", "19", "21"]
+    assert [f.key for f in rep.forms] == ["1", "2", "4", "7", "9", "14", "15", "16", "17", "19", "21"]
     skip = [x for x in rep.findings if x.rule == "FORM-SKIP"]
     assert len(skip) == 1 and "별지 제13호" in skip[0].message and "include" in skip[0].message
     (project / "forms.yaml").write_text("include: ['13']\n", encoding="utf-8")
@@ -206,3 +207,14 @@ def test_real_forms_14_19_21_paragraphs(real_forms):
     at = xml.index("가나시 민원과")
     seg = xml[at:xml.index("</hp:p>", at)]
     assert seg.count("<hp:lineseg ") == 1                                       # 한 줄 캐시를 새로 써 두었다
+
+
+def test_real_form_17_example_values(real_forms):
+    project, rep = real_forms
+    f17 = _form(rep, "17")
+    ex = [x for x in f17.findings if x.rule == "FORM-EXAMPLE"]
+    assert len(ex) == 1 and "19,500,000" in ex[0].message and "6곳" in ex[0].message
+    cells = _cells(project / f17.output, 1)
+    assert cells[(1, 4)] == "19,500,000"                                       # 지우지는 않는다
+    others = [x for f in rep.forms if f.key != "17" for x in f.findings if x.rule == "FORM-EXAMPLE"]
+    assert others == []                                                          # 순번·실적을 채운 표는 예시가 아니다

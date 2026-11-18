@@ -343,6 +343,7 @@ _ISSUER_GROUP = re.compile(r"발급|확인기관|증명기관|(?:수요|발주)�
 _RECORD_GROUP = re.compile(r"실적(?:내용|사항)|계약내용|납품내용")
 _AGENCY_LABEL = re.compile(r"^불?인정실적$|평가기준실적|평가점수|^발급(?:부서|일자?|번호|기관|자)|^확인자|검토의견|"
                            r"(?:수요|발주)기관작성란")
+_PREFILLED = re.compile(r"^(?:\d{1,3}(?:,\d{3})+|\d{4,})(?:\.\d+)?$")      # 1,000 이상 — 순번·수량(1, 2)은 빼고
 _SUBMITTED = re.compile(r"제출한?(?:납품|수행|용역)?실적|제출실적")
 _PAST_FORM = re.compile(r"실적\s*(?:증명|확인)서|경력\s*(?:증명|확인)서|이행\s*(?:실적|증명)서")
 _PAST_FIELDS = {"rfp.title", "rfp.agency", "rfp.period"}
@@ -690,6 +691,27 @@ class _Filler:
                                            "목록을 고치면 함께 고치세요")
         return rows
 
+    def report_prefilled(self, t_no: int, grid: Grid, foreign: set[int]) -> None:
+        """목록 표에 미리 적힌 숫자(조달청 별지 제17호의 '19,500,000' 같은 견본 예시 값)를 알린다.
+
+        머리글 행 아래에서 빈칸과 숫자가 섞인 행만 본다. 발주기관이 정해 둔 값일 수도 있어 지우지 않는다.
+        """
+        if grid.rows < 3:
+            return
+        head = grid.row_cells(0)
+        if len(head) < 3 or not all(header_like(c.text) or is_blank(c.text) for c in head):
+            return
+        found: list[str] = []
+        for r in range(1, grid.rows):
+            cells = [c for c in grid.row_cells(r) if id(c.el) not in foreign]
+            nums = [c.text.strip() for c in cells if _PREFILLED.match(c.text.strip())]
+            if nums and any(is_blank(c.text) for c in cells):
+                found += nums
+        if found:
+            sample = ", ".join(dict.fromkeys(found[:4]))
+            self.find("FORM-EXAMPLE", "minor", f"표{t_no}에 미리 적힌 숫자가 {len(found)}곳 있습니다({sample} …) — "
+                                               "서식 견본의 예시 값이면 지우고, 발주기관이 정한 값이면 그대로 두세요")
+
     def report_unknown_list(self, t_no: int, grid: Grid, r: int) -> bool:
         row = grid.row_cells(r)
         if len(row) < 2 or not all(header_like(c.text) for c in row) or r + 1 >= grid.rows:
@@ -780,6 +802,7 @@ def fill_region(section, ctx: FillContext, result: FormResult) -> None:
             continue
         filler.keep.append(grid)
         foreign = filler.mark_foreign(grid)
+        filler.report_prefilled(t_no, grid, foreign)          # 채우기 전 원본 기준
 
         def _foreign_row(r: int, grid=grid, foreign=foreign) -> bool:
             cells = grid.row_cells(r)
