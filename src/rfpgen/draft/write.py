@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel
@@ -305,43 +306,65 @@ def _section_from(inp: DraftInputs, node: OutlineNode, out: SectionOut, request_
     return d
 
 
-def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile, share_kb: bool) -> SectionDraft:
+@dataclass
+class _FirstPass:
+    """절 초안 1차 호출 결과(분량 보강에 다시 쓴다)."""
+
+    draft: SectionDraft
+    out: SectionOut
+    context: str
+    section: str
+
+
+def _section_call(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile,
+                  share_kb: bool) -> _FirstPass:
     spec = profile.value("llm.tasks")["section"]
     # 고정 접두부(캐시): RFP 요약(+ KB 카탈로그). 가변부: 이 절의 정보와 작업 지시.
     context = rfp_brief(inp) + ("\n" + kb_catalog(inp.kb) if share_kb else "")
     section = section_text(inp, node, include_kb_content=share_kb)
     # 사고 토큰도 상한에 들어간다: 요구사항 수로 줄이면 잘린다(2026-11-17 실측, 8K에서 3절 중 2절 잘림)
-    max_tokens = int(spec["max_tokens"])
-    data_class = "internal" if share_kb else "public"
     out, reply = gateway.run(LLMCall(task="draft.section", system=SYSTEM_WRITER, context=context,
                                      instruction=section + "\n\n" + SECTION_INSTRUCTION, schema=SectionOut,
-                                     effort=spec["effort"], max_tokens=max_tokens, data_class=data_class), SectionOut)
-    d = _section_from(inp, node, out, reply.request_id)
+                                     effort=spec["effort"], max_tokens=int(spec["max_tokens"]),
+                                     data_class="internal" if share_kb else "public"), SectionOut)
+    return _FirstPass(_section_from(inp, node, out, reply.request_id), out, context, section)
 
-    # 분량 보강: 목표 최소 글자 수의 expand_below 배보다 짧으면 1차 초안을 주고 한 번 더 쓰게 한다
-    # (2026-11-18 예제 실측: 목표 글자 수를 줘도 65%에 그친 절이 있었다). 길어졌을 때만 바꾼다.
+
+def _maybe_expand(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile, share_kb: bool,
+                  fp: _FirstPass) -> SectionDraft:
+    """분량 보강: 목표 최소 글자 수의 expand_below 배보다 짧으면 1차 초안을 주고 한 번 더 쓰게 한다
+    (2026-11-18 예제 실측: 목표 글자 수를 줘도 65%에 그친 절이 있었다). 길어졌을 때만 바꾸고, 실패하면 1차 초안."""
+    spec = profile.value("llm.tasks")["section"]
+    d = fp.draft
     target = next((ln.target_chars for ln in inp.budget.lines if ln.node_id == node.id), [])
     ratio = float(spec.get("expand_below", 0) or 0)
-    if target and ratio and d.est_chars < target[0] * ratio:
-        instruction = (section + f"\n\n<draft>\n{out.model_dump_json()}\n</draft>\n\n"
-                       + EXPAND_INSTRUCTION.format(current=d.est_chars, minimum=target[0], maximum=target[1]))
-        try:
-            out2, reply2 = gateway.run(LLMCall(task="draft.section.expand", system=SYSTEM_WRITER, context=context,
-                                               instruction=instruction, schema=SectionOut, effort=spec["effort"],
-                                               max_tokens=max_tokens, data_class=data_class), SectionOut)
-        except LLMError:
-            return d                                     # 보강이 실패해도 1차 초안은 쓴다
-        d2 = _section_from(inp, node, out2, reply2.request_id)
-        if d2.est_chars > d.est_chars:
-            d2.llm_call_ids = d.llm_call_ids + d2.llm_call_ids
-            return d2
+    if not (target and ratio and d.est_chars < target[0] * ratio):
+        return d
+    instruction = (fp.section + f"\n\n<draft>\n{fp.out.model_dump_json()}\n</draft>\n\n"
+                   + EXPAND_INSTRUCTION.format(current=d.est_chars, minimum=target[0], maximum=target[1]))
+    try:
+        out2, reply2 = gateway.run(LLMCall(task="draft.section.expand", system=SYSTEM_WRITER, context=fp.context,
+                                           instruction=instruction, schema=SectionOut, effort=spec["effort"],
+                                           max_tokens=int(spec["max_tokens"]),
+                                           data_class="internal" if share_kb else "public"), SectionOut)
+    except LLMError:
+        return d
+    d2 = _section_from(inp, node, out2, reply2.request_id)
+    if d2.est_chars > d.est_chars:
+        d2.llm_call_ids = d.llm_call_ids + d2.llm_call_ids
+        return d2
     return d
+
+
+def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profile: Profile, share_kb: bool) -> SectionDraft:
+    return _maybe_expand(inp, node, gateway, profile, share_kb, _section_call(inp, node, gateway, profile, share_kb))
 
 
 def write_sections(inp: DraftInputs, gateway: LLMGateway | None, profile: Profile, share_kb: bool,
                    only: set[str] | None, errors: list[str]) -> list[SectionDraft]:
-    """배점이 큰 절부터 쓴다. LLM이면 첫 절을 혼자 보내 공통 접두부(RFP 요약) 캐시를 만들고 인증·모델 문제를 먼저
-    드러낸 뒤, 나머지는 llm.tasks.section.parallel 개씩 동시에 보낸다(결과·오류 순서는 배점 순으로 고정)."""
+    """배점이 큰 절부터 쓴다. LLM이면 첫 절의 1차 호출만 혼자 보내 공통 접두부(RFP 요약) 캐시를 만들고 인증·모델
+    문제를 먼저 드러낸 뒤, 그 절의 분량 보강과 나머지 절은 llm.tasks.section.parallel 개씩 동시에 보낸다
+    (2026-11-18 예제 실측: 첫 절 보강까지 혼자 기다리면 동시 실행이 6분 늦게 시작됐다). 결과·오류 순서는 고정."""
     nodes = [n for n in leaf_sections(inp.outline) if only is None or n.id in only]
     order = sorted(nodes, key=lambda n: -n.points)
     if gateway is None or not order:
@@ -356,20 +379,26 @@ def write_sections(inp: DraftInputs, gateway: LLMGateway | None, profile: Profil
 
     drafts: dict[str, SectionDraft] = {}
     first, rest = order[0], order[1:]
-    drafts[first.id], exc = one(first)
-    results: list[tuple[SectionDraft, LLMError | None]] = []
-    if exc is not None:
+    jobs: list[tuple[OutlineNode, object]] = []
+    try:
+        fp = _section_call(inp, first, llm, profile, share_kb)
+        jobs.append((first, lambda: (_maybe_expand(inp, first, llm, profile, share_kb, fp), None)))
+    except LLMError as exc:
+        drafts[first.id] = skeleton_section(inp, first)
         errors.append(f"{first.number} {first.title}: {exc}")
         if "인증" in str(exc) or "모델을 정하지 못했" in str(exc):
-            results = [(skeleton_section(inp, n), None) for n in rest]      # 남은 절은 골격으로
-    if not results and rest:
-        workers = max(1, int(profile.value("llm.tasks")["section"].get("parallel", 1) or 1))
-        if workers == 1:
-            results = [one(n) for n in rest]
-        else:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                results = list(pool.map(one, rest))
-    for node, (draft, err) in zip(rest, results, strict=True):
+            for n in rest:                                       # 남은 절은 골격으로
+                drafts[n.id] = skeleton_section(inp, n)
+            return [drafts[n.id] for n in nodes]
+    jobs += [(n, (lambda n=n: one(n))) for n in rest]
+    workers = max(1, int(profile.value("llm.tasks")["section"].get("parallel", 1) or 1))
+    if workers == 1:
+        results = [job() for _, job in jobs]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(job) for _, job in jobs]
+            results = [f.result() for f in futures]
+    for (node, _), (draft, err) in zip(jobs, results, strict=True):
         drafts[node.id] = draft
         if err is not None:
             errors.append(f"{node.number} {node.title}: {err}")
