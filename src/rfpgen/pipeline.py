@@ -17,6 +17,7 @@ from .parse import InputFile, UnsafeInputError, collect_inputs, detect_format, p
 from .plan import plan_proposal
 from .profile import Profile, load_profile
 from .report.markdown import analysis_markdown, questions_markdown
+from .report.ics import schedule_ics
 from .report.xlsx import write_workbook
 from .schemas.docir import Document
 from .schemas.plan import Outline, PageBudget, Trace
@@ -112,6 +113,12 @@ def analyze(paths: list[Path], project_dir: Path, profile: Profile | None = None
     out["analysis_md"].write_text(analysis_markdown(docs, rfp, outline, budget, trace, report, profile.name), encoding="utf-8")
     out["questions_md"] = project_dir / "out" / "questions.md"
     out["questions_md"].write_text(questions_markdown(rfp), encoding="utf-8")
+    ics = project_dir / "out" / "일정.ics"
+    if (cal := schedule_ics(rfp)) is not None:
+        ics.write_bytes(cal.encode("utf-8"))                 # CRLF 그대로(RFC 5545)
+        out["ics"] = ics
+    elif ics.exists():
+        ics.unlink()                                         # 새 버전에서 일정을 못 읽었으면 옛 파일을 남기지 않는다
 
     project_yaml = project_dir / "project.yaml"
     meta = yaml.safe_load(project_yaml.read_text(encoding="utf-8")) if project_yaml.exists() else {}

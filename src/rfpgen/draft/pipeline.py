@@ -22,7 +22,7 @@ from ..schemas.plan import Outline, PageBudget, Trace
 from ..schemas.rfp import Rfp
 from .context import DraftInputs, load_overview
 from .tokens import PLACEHOLDER, apply_tokens
-from .write import data_requests, draft_questions, llm_storyboard, skeleton_storyboard, write_sections
+from .write import data_requests, draft_questions, llm_storyboard, skeleton_storyboard, suggest_due, write_sections
 
 
 @dataclass
@@ -69,7 +69,7 @@ def storyboard_markdown(sb: Storyboard) -> str:
             if d.category != current:
                 current = d.category
                 lines += ([""] if lines[-1] else []) + [f"### {current or '기타'}", ""]
-            lines.append(f"- {d.need} — {d.section_title}")
+            lines.append(f"- {d.need} — {d.section_title}" + (f" (기한 {d.due})" if d.due else ""))
         lines.append("")
     return "\n".join(lines)
 
@@ -110,6 +110,7 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
     else:
         sb = skeleton_storyboard(inp)
     sb.data_requests = data_requests(sb, kb)
+    suggest_due(sb.data_requests, rfp.notice.schedule)
     inp.storyboard = sb
     sb_path.parent.mkdir(parents=True, exist_ok=True)
     sb_path.write_text(sb.model_dump_json(indent=2), encoding="utf-8")

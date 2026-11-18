@@ -112,6 +112,11 @@ def write_workbook(path: Path, rfp: Rfp, outline: Outline, budget: PageBudget, t
         [r.kind, r.text, items.get(r.item_id or "", ""), _loc_text(r.locators)] for r in rfp.evaluation.rules
     ], [10, 80, 24, 22])
 
+    _sheet(wb, "일정", ["종류", "원문 이름표", "시작", "끝(마감)", "원문", "RFP 원문 위치"], [
+        [x.kind, x.label, (x.start or "").replace("T", " "), (x.end or "").replace("T", " "), x.text, _loc_text(x.locators)]
+        for x in rfp.notice.schedule
+    ], [12, 24, 18, 18, 60, 22])
+
     _sheet(wb, "질의서 후보", ["대상", "쟁점", "질의(초안)", "RFP 원문 위치"], [
         [q.target, q.issue, q.question, _loc_text(q.locators)] for q in rfp.questions
     ], [18, 26, 80, 22])

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -193,6 +194,32 @@ def draft_questions(drafts: list[SectionDraft], sb: Storyboard | None) -> list[t
 
 def _category(need: str) -> str:
     return next((c for c, pat in _CATEGORIES if pat.search(need)), "기타")
+
+
+def suggest_due(requests: list[DataRequest], schedule: list, today: dt.date | None = None) -> None:
+    """자료 요청 기한을 공고 일정으로 제안한다(비어 있을 때만).
+
+    발주기관에 물을 것은 질의 마감일, 회사 자료는 제출 마감 7일 전(주말이면 앞 금요일) — 받은 자료로 본문을 고칠
+    시간을 남긴다. 이미 지난 날이면 오늘로 둔다. 일정이 없으면 비워 둔다.
+    """
+    from ..extract.schedule import deadline
+
+    today = today or dt.date.today()
+    dl = deadline(schedule)
+    asks = [x for x in schedule if x.kind == "질의" and x.due]
+    ask = max(asks, key=lambda x: x.due or "") if asks else None
+    for r in requests:
+        if r.due:
+            continue
+        if r.category == "발주기관 확인":
+            if ask is not None and (ask.due or "")[:10] >= today.isoformat():
+                r.due = (ask.due or "")[:10]
+            continue
+        if dl is not None and dl.due:
+            day = dt.date.fromisoformat(dl.due[:10]) - dt.timedelta(days=7)
+            while day.weekday() >= 5:
+                day -= dt.timedelta(days=1)
+            r.due = max(day, today).isoformat()
 
 
 def merge_requests(requests: list[DataRequest], threshold: float = 0.35) -> list[DataRequest]:

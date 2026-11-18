@@ -187,6 +187,7 @@ uv run rfpgen status projects/제안요청서
 |---|---|---|
 | 평가표·요구사항·작성지침이 원문과 맞는지 | `out/analysis.md`, `out/analysis.xlsx` | — |
 | 발주기관에 물어볼 것(모호한 요구사항, 초안을 쓰며 나온 확인 사항) | `out/questions.md` | 초안을 다시 쓰면 함께 갱신 |
+| 제출 마감·질의 기간·설명회 일정 | `out/analysis.md` '일정', `out/일정.ics`(캘린더 앱으로 가져오기, 하루 전 알림) | — |
 | 장별 핵심 메시지·필요한 근거(스토리보드) | `strategy/storyboard.json`(`.md`는 읽기용) | `rfpgen draft 프로젝트` |
 | 본문의 `[확인 필요]` 자리 | `out/proposal.hwpx`, `out/trace_draft.xlsx` | 한글에서 직접 고치거나 KB를 채우고 `rfpgen draft` |
 | 도식 내용 | `strategy/figures/<id>.auto.json` → `<id>.json`으로 복사해 수정 | `rfpgen figures 프로젝트` |
@@ -275,8 +276,9 @@ uv run rfpgen start 제안요청서.hwp --kb kb --llm
 
 | 폴더·파일 | 내용 |
 |---|---|
-| `out/analysis.md`, `out/analysis.xlsx` | 분석 요약, 요구사항 추적표·평가표·작성지침·무효·감점 사유 시트 |
+| `out/analysis.md`, `out/analysis.xlsx` | 분석 요약, 요구사항 추적표·평가표·작성지침·무효·감점 사유·일정 시트 |
 | `out/questions.md` | 발주기관 질의서 초안 |
+| `out/일정.ics` | 공고 일정 캘린더 파일(일정을 읽었을 때만) |
 | `strategy/storyboard.md` | 장별 핵심 메시지와 필요한 근거 |
 | `out/proposal.hwpx` | 본문 초안(A4 세로, 개조식) |
 | `out/trace_draft.xlsx` | 요구사항별 대응 방안과 자료 요청서 |

@@ -25,7 +25,7 @@ def test_analyze_cli_end_to_end(hwpx_file, tmp_path):
 
     wb = load_workbook(out / "out" / "analysis.xlsx")
     assert wb.sheetnames == ["추적표", "평가표", "요구사항", "목차·쪽수", "작성지침", "무효·감점 사유", "평가규칙",
-                             "질의서 후보", "점검 결과"]
+                             "일정", "질의서 후보", "점검 결과"]
     header = [c.value for c in wb["추적표"][1]]
     assert header == TRACE_COLUMNS
     assert header[:8] == ["요구사항 ID", "명칭", "분류", "연결 평가항목", "제안 요약", "수용 여부", "제안서 쪽", "RFP 원문 위치"]

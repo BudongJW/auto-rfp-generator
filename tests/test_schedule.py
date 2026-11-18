@@ -89,6 +89,11 @@ def test_sample_schedule_flows_to_outputs(tmp_path):
     assert dl is not None and dl.due == "2026-11-30T10:00"                 # 18일 + 12일, 주말 아님
     analysis = (project / "out" / "analysis.md").read_text(encoding="utf-8")
     assert "## 일정" in analysis and "제안서 제출 마감" in analysis
+    assert "BEGIN:VEVENT" in (project / "out" / "일정.ics").read_text(encoding="utf-8")
+    import openpyxl
+
+    sheet = openpyxl.load_workbook(project / "out" / "analysis.xlsx")["일정"]
+    assert [c.value for c in sheet[1]][:2] == ["종류", "원문 이름표"] and sheet.max_row == 5
     questions = (project / "out" / "questions.md").read_text(encoding="utf-8")
     assert "> 질의 기간: 2026-11-19(목) 09:00 ~ 2026-11-24(화) 18:00" in questions
     assert span_text(dl) == "2026-11-30(월) 10:00"
@@ -129,3 +134,52 @@ def test_diff_flags_moved_deadline():
     changes = diff_rfp(old, new, 1, 2).changes
     assert [(c.key, c.old, c.new, c.high_risk) for c in changes] == [
         ("schedule.제안서 제출", "2026-11-30(월) 10:00", "2026-12-07(월) 10:00", True)]
+
+
+def test_schedule_ics():
+    from rfpgen.report.ics import schedule_ics
+    from rfpgen.schemas.common import Extracted
+    from rfpgen.schemas.rfp import Rfp, ScheduleItem
+
+    rfp = Rfp()
+    rfp.notice.title = Extracted(value="2026년 통합민원시스템 고도화 사업 — 아주 긴 사업명으로 접기를 확인합니다")
+    assert schedule_ics(rfp) is None
+    rfp.notice.schedule = [
+        ScheduleItem(kind="질의", label="질의 기간", start="2026-11-19T09:00", end="2026-11-24T18:00", text="질의, 회신; 기간"),
+        ScheduleItem(kind="제안서 제출", label="제안서 제출 마감", start="2026-11-30T10:00"),
+        ScheduleItem(kind="제안서 평가", label="제안서 평가(발표)", start="2026-12-03"),
+    ]
+    cal = schedule_ics(rfp, now=dt.datetime(2026, 11, 18, tzinfo=dt.timezone.utc))
+    assert cal.startswith("BEGIN:VCALENDAR\r\n") and cal.endswith("END:VCALENDAR\r\n")
+    lines = cal.split("\r\n")[:-1]
+    assert all(len(x.encode("utf-8")) <= 75 for x in lines)                    # RFC 5545 줄 접기
+    unfolded = cal.replace("\r\n ", "")
+    assert unfolded.count("BEGIN:VEVENT") == 3 and unfolded.count("BEGIN:VALARM") == 3
+    assert "DTSTART:20261124T090000Z" in unfolded                                # 질의 마감 18:00 KST
+    assert "DTSTART:20261130T010000Z" in unfolded                                # 제출 마감 10:00 KST
+    assert "DTSTART;VALUE=DATE:20261203" in unfolded and "DTEND;VALUE=DATE:20261204" in unfolded
+    assert r"질의\, 회신\; 기간" in unfolded                                       # 쉼표·쌍반점 이스케이프
+
+
+def test_suggest_due():
+    from rfpgen.draft.write import suggest_due
+    from rfpgen.schemas.draft import DataRequest
+    from rfpgen.schemas.rfp import ScheduleItem
+
+    sched = [ScheduleItem(kind="질의", label="질의 기간", start="2026-11-19T09:00", end="2026-11-24T18:00"),
+             ScheduleItem(kind="제안서 제출", label="제안서 제출 마감", start="2026-11-30T10:00")]
+    reqs = [DataRequest(section_id="s", section_title="t", need="실적 증빙", category="실적"),
+            DataRequest(section_id="s", section_title="t", need="연계 규격", category="발주기관 확인"),
+            DataRequest(section_id="s", section_title="t", need="이미 정함", category="인력", due="2026-11-20")]
+    suggest_due(reqs, sched, today=DAY)
+    assert [r.due for r in reqs] == ["2026-11-23", "2026-11-24", "2026-11-20"]
+    late = [DataRequest(section_id="s", section_title="t", need="x", category="실적"),
+            DataRequest(section_id="s", section_title="t", need="y", category="발주기관 확인")]
+    suggest_due(late, sched, today=dt.date(2026, 11, 26))                       # 질의 마감이 지났다
+    assert [r.due for r in late] == ["2026-11-26", ""]
+    weekend = [DataRequest(section_id="s", section_title="t", need="x", category="실적")]
+    suggest_due(weekend, [ScheduleItem(kind="제안서 제출", label="마감", start="2026-12-07T10:00")], today=DAY)
+    assert weekend[0].due == "2026-11-30"                                        # 7일 전 월요일 그대로
+    sun = [DataRequest(section_id="s", section_title="t", need="x", category="실적")]
+    suggest_due(sun, [ScheduleItem(kind="제안서 제출", label="마감", start="2026-12-06")], today=DAY)
+    assert sun[0].due == "2026-11-27"                                            # 11-29(일) → 앞 금요일
