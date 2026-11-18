@@ -74,7 +74,7 @@ def _chapters(doc: Document) -> list[int]:
             if b.kind == "para" and len(b.text) < 40 and CHAPTER_NUM.match(b.text) and not TOC_LEADER.search(b.text)]
 
 
-def _render(blocks: list[Block]) -> list[str]:
+def render_blocks(blocks: list[Block]) -> list[str]:
     """문단은 그대로, 표 칸은 행마다 ' | '로 이어 한 줄로."""
     lines: list[str] = []
     row_key, row = None, []
@@ -115,7 +115,7 @@ def overview_excerpt(docs: list[Document], *, per_part: int = 3000, total: int =
             seen: set[str] = set()
             body: list[str] = []
             size = 0
-            for line in _render(doc.blocks[start + 1:end]):
+            for line in render_blocks(doc.blocks[start + 1:end]):
                 line = PRIVATE_USE.sub("", line).strip()
                 if not line or line in seen:
                     continue

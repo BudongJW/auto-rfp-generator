@@ -151,6 +151,15 @@ uv run rfpgen kb init kb
 uv run rfpgen kb check kb
 ```
 
+과거 제안서가 있으면 절 단위로 잘라 재사용 문단(`kb/content/`)으로 넣을 수 있습니다. HWP·HWPX·PDF·DOCX를 받습니다.
+
+```bash
+uv run rfpgen kb import 2025_민원고도화_제안서.hwp 2024_행정정보_제안서.pdf --kb kb --won
+```
+
+- `company.yaml`의 회사명·영문명·제품명은 '당사'로, `private/people.csv`의 실명은 '○○○'로 바꿔 넣습니다. 그래서 `company.yaml`을 먼저 채운 뒤 가져오세요. 원본 파일은 바뀌지 않습니다.
+- 넣은 파일을 열어 지금 사업과 맞지 않는 내용은 지우세요. 본문 초안에서 제목이 비슷한 절에 '재사용 후보'로 표시되고, `--llm --llm-share-kb`를 주면 Claude가 그 절을 쓸 때 참고합니다.
+
 ### ③ 한 번에 실행
 
 ```bash
@@ -236,6 +245,7 @@ uv run rfpgen start 제안요청서.hwp --kb kb --llm
 | `rfpgen start 파일들 [--kb kb] [--llm]` | 분석부터 제출 패키지까지 한 번에 |
 | `rfpgen status 프로젝트` | 진행 상태와 다음 할 일 |
 | `rfpgen kb init kb` / `kb check kb` | 회사 정보 예시 만들기 / 점검 |
+| `rfpgen kb import 파일들 --kb kb` | 과거 제안서를 재사용 문단으로 넣기(회사명·실명은 가림) |
 | `rfpgen analyze 파일들 -o 프로젝트` | RFP 분석만 |
 | `rfpgen draft 프로젝트 [--llm] [--section ID]` | 스토리보드·본문 초안(HWPX) |
 | `rfpgen figures 프로젝트` | 도식만 다시 만들기 |

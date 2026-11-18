@@ -219,6 +219,36 @@ def kb_check_cmd(folder: Annotated[Path, typer.Argument(exists=True, file_okay=F
         typer.secho("  문제 없음", fg=typer.colors.GREEN)
 
 
+@kb_app.command("import")
+def kb_import_cmd(
+    files: Annotated[list[Path], typer.Argument(help="과거 제안서(HWP·HWPX·PDF·DOCX, ZIP 가능)", exists=True, dir_okay=False)],
+    kb: Annotated[Path, typer.Option("--kb", help="넣을 KB 폴더(company.yaml의 회사명·제품명은 '당사'로 바꿔 넣음)")] = Path("kb"),
+    won: Annotated[bool | None, typer.Option("--won/--lost", help="수주한 제안서인지(재사용 우선순위 참고용)")] = None,
+    min_chars: Annotated[int, typer.Option("--min-chars", help="이보다 짧은 절은 건너뜀")] = 200,
+    force: Annotated[bool, typer.Option("--force", help="같은 이름의 파일이 있으면 덮어씀")] = False,
+) -> None:
+    """과거 제안서를 절 단위로 잘라 재사용 문단(content/*.md)으로 넣는다. 회사 식별어·실명은 가려서 넣는다."""
+    from .kb.importer import import_proposals
+
+    if not kb.is_dir():
+        typer.secho(f"{kb}: KB 폴더가 없습니다 — 먼저 `rfpgen kb init {kb}`", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    res = import_proposals(files, kb, won=won, min_chars=min_chars, force=force)
+    for s in res.written:
+        typer.echo(f"  {s.path.name}  {s.chars:,}자" + (f"  (가림 {s.masked}곳)" if s.masked else ""))
+    typer.echo(f"재사용 문단 {len(res.written)}개를 {kb / 'content'}에 넣었습니다"
+               + (f" · 짧아서 건너뜀 {res.skipped_short}절" if res.skipped_short else "")
+               + (f" · 회사 식별어·실명 {res.masked}곳을 '당사'·'○○○'로 바꿈" if res.masked else ""))
+    if res.skipped_existing:
+        typer.secho(f"  이미 있어 건너뜀 {len(res.skipped_existing)}개(덮어쓰려면 --force)", fg=typer.colors.YELLOW)
+    for e in res.errors:
+        typer.secho(f"  경고: {e}", fg=typer.colors.YELLOW)
+    typer.echo("다음: 파일을 열어 지금 사업에 맞지 않는 내용을 지우고, `rfpgen draft 프로젝트 --llm --llm-share-kb`로 "
+               "관련 절에 참고시키세요")
+    if not res.written and not res.skipped_existing:
+        raise typer.Exit(code=1)
+
+
 @app.command("draft", rich_help_panel=STEPS)
 def draft_cmd(
     project: Annotated[Path, typer.Argument(help="analyze로 만든 프로젝트 폴더", exists=True, file_okay=False)],
