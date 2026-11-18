@@ -70,12 +70,21 @@ def _latest(paths: list[Path]) -> Path | None:
     return max(paths, key=num) if paths else None
 
 
+def _show(path: str | Path) -> str:
+    """현재 폴더 아래면 상대 경로, 아니면 그대로."""
+    try:
+        return str(Path(path).resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path)
+
+
 def project_status(project: Path) -> tuple[list[Stage], list[str]]:
     """(단계 목록, 다음 할 일). 파일만 읽는다."""
     project = Path(project)
     p = str(project)
     meta = _meta(project)
-    kb = meta.get("kb")
+    kb_path = meta.get("kb")
+    kb = _show(kb_path) if kb_path else None             # 화면에는 현재 폴더 기준 경로로
     kb_opt = f" --kb {kb}" if kb else " --kb <KB 폴더>"
     stages: list[Stage] = []
     todo: list[str] = []
@@ -99,11 +108,11 @@ def project_status(project: Path) -> tuple[list[Stage], list[str]]:
 
     stages.append(Stage("kb", "회사 정보(KB)", bool(kb), kb or "연결 안 됨 — 회사 정보 칸·실적·인력이 비어 있습니다",
                         "rfpgen kb init kb"))
-    if kb and Path(kb).is_dir():
+    if kb_path and Path(kb_path).is_dir():
         try:
             from .kb import load_kb
 
-            if load_kb(Path(kb)).identity.name == EXAMPLE_COMPANY:
+            if load_kb(Path(kb_path)).identity.name == EXAMPLE_COMPANY:
                 todo.append(f"KB에 예시 회사 값('{EXAMPLE_COMPANY}')이 남아 있습니다 — "
                             f"{kb}의 company.yaml·CSV를 회사 값으로 바꾸세요")
         except Exception:  # noqa: BLE001 — KB 형식 오류는 kb check가 알려 준다
