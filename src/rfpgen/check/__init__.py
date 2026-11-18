@@ -42,6 +42,11 @@ def supported(token: str, corpus: str) -> bool:
     return re.search(r"(?<![\d.,])" + re.escape(num) + r"\s*" + re.escape(unit) + tail, corpus) is not None
 
 
+def _number_part(token: str) -> str:
+    m = re.match(r"\s*([\d,]*\d(?:\.\d+)?)", token)
+    return m.group(1).replace(",", "") if m else ""
+
+
 def rfp_number_sources(rfp: Rfp) -> str:
     """본문 수치의 근거로 인정할 RFP 글: 추출한 값과 원문 인용 전부, 그리고 RFP에서 바로 셀 수 있는 값
     (요구사항 건수, 평가 부문·항목 배점, 사업예산의 억 단위 표기)."""
@@ -145,10 +150,13 @@ def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, 
                          + [f"{p.id}.{fld}" for p in kb.projects for fld in ("amount_krw", "start", "end")]
                          + [f"{h.id}.years" for h in kb.people])
     allowed = rfp_text + " " + kb_values
+    # KB 값은 단위 없이 적힌 것이 있다(인력 경력 '18' → 본문 '{{kb:H-001.years}}년' = '18년'): 수가 같으면 근거로 본다
+    kb_numbers = {x.replace(",", "") for x in re.findall(r"\d[\d,]*(?:\.\d+)?", kb_values)}
     for d in drafts:
         if d.origin == "skeleton":
             continue
-        unsupported = sorted({n for n in numbers(d.all_text(figures=False)) if not supported(n, allowed)})
+        unsupported = sorted({n for n in numbers(d.all_text(figures=False))
+                              if not supported(n, allowed) and _number_part(n) not in kb_numbers})
         if unsupported:
             _f(rep, "FACT-002", "major", f"{d.number} {d.title}: 근거(KB·RFP)를 찾지 못한 수치 {', '.join(unsupported[:8])}",
                section=d.section_id, basis="원칙 P2")

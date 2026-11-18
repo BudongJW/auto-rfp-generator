@@ -131,7 +131,7 @@ class WriterFake:
         else:
             sid = re.search(r"section_id: (S-[\d-]+)", call.instruction).group(1)
             reqs = re.findall(r"^- ([A-Z]{3}-\d{3}) ", call.instruction, re.M)
-            text = "정규직 개발 인력 {{fact:F-002}} 투입"
+            text = "정규직 개발 인력 {{fact:F-002}} 투입, PM 경력 {{kb:H-001.years}}년"
             if "기능 요구사항" in call.instruction:
                 text += ", 예시정보의 검증된 프레임워크 적용, 35개 기관 구축 경험"
             data = {"head_message": f"{sid} 결론: 민원 처리 기간 단축",
@@ -162,6 +162,7 @@ def test_llm_draft_tokens_numbers_blind_and_coverage(project, kb_dir, profile):
     assert ("BLD-001", "blocker") in rules                # 블라인드인데 회사명이 들어갔다
     fact2 = next(f for f in res.check.findings if f.rule == "FACT-002")
     assert "35개" in fact2.message and "85명" not in fact2.message   # KB 근거 없는 수치만
+    assert "18년" in func.all_text() and "18년" not in fact2.message    # 단위 없이 적힌 KB 값(경력 18)도 근거
     # 자료 요청: KB ID로 답한 근거는 빠지고, 없는 것만 남는다
     needs = {r.need for r in res.storyboard.data_requests}
     assert "클라우드 전환 실적" in needs and "F-002" not in needs
