@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# 테스트: 파이썬만(빠름)과 렌더 경로 포함(PDF·도식·장표 변환) 두 가지로 돌린다.
+name: test
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen
+      # 변환기(Node 사이드카·LibreOffice)가 없으면 렌더 테스트는 건너뛰고 나머지를 본다
+      - run: uv run pytest -q
+
+  os:
+    # Windows·macOS: 변환기 없이(렌더 테스트는 건너뜀) 테스트와 처음 쓰는 흐름(setup 안내 → sample → start)을 본다
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+      - name: 처음 쓰는 흐름(변환기 없음)
+        run: |
+          mkdir smoke && cd smoke
+          uv run --project .. rfpgen setup --dry-run --no-browser || true
+          uv run --project .. rfpgen doctor || true
+          uv run --project .. rfpgen sample
+          uv run --project .. rfpgen start 예제_제안요청서.hwpx --date 2026-12-01 > start.log
+          cat start.log
+          test -f projects/예제_제안요청서/out/proposal.hwpx
+          test -f projects/예제_제안요청서/out/forms/forms.json
+          uv run --project .. rfpgen status projects/예제_제안요청서
+
+  render:
+    name: render (PDF·도식·장표 포함)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sidecars/node/package-lock.json
+      - name: 한글 글꼴·LibreOffice
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk libreoffice-impress
+      - name: Node 사이드카(rhwp, Playwright Chromium)
+        working-directory: sidecars/node
+        run: npm ci && npx playwright install --with-deps chromium
+      - run: uv sync --frozen
+      - run: uv run rfpgen doctor --full
+      - run: uv run pytest -q
+
+  docker:
+    name: docker image (설치 없이 쓰는 이미지)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t rfpgen:ci .
+      - name: 이미지 안에서 설치 점검(실제 변환 포함)
+        run: docker run --rm rfpgen:ci doctor --full
+      - name: 이미지로 한 번에 실행(합성 RFP)
+        run: |
+          mkdir -p smoke && chmod 777 smoke
+          docker run --rm -v "$PWD/smoke:/work" rfpgen:ci sample 제안요청서.hwpx
+          docker run --rm -v "$PWD/smoke:/work" rfpgen:ci start 제안요청서.hwpx
+          test -f smoke/projects/제안요청서/submission/01_정성제안서.pdf
+          test -f smoke/projects/제안요청서/out/forms/forms.json

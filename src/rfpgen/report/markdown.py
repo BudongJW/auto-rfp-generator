@@ -1,0 +1,203 @@
+"""사람이 G1·G2에서 검토하는 분석 요약(Markdown)과 질의서 초안."""
+
+from __future__ import annotations
+
+from ..extract.schedule import span_text
+from ..schemas.docir import Document
+from ..schemas.plan import Outline, PageBudget, Trace
+from ..schemas.rfp import ExtractionReport, Rfp
+
+_SEV = {"error": "🔴 오류", "warning": "🟡 경고", "info": "ℹ️ 정보"}
+
+
+def _v(ex, fmt=str) -> str:
+    return "—(찾지 못함)" if ex is None else fmt(ex.value)
+
+
+def analysis_markdown(docs: list[Document], rfp: Rfp, outline: Outline, budget: PageBudget,
+                      trace: Trace, report: ExtractionReport, profile_name: str) -> str:
+    n, g, ev = rfp.notice, rfp.guideline, rfp.evaluation
+    lines: list[str] = []
+    add = lines.append
+    add("# RFP 분석 결과")
+    add("")
+    add("> 이 문서는 자동 추출 결과입니다. 아래 **G1(추출 확정)·G2(설계 확정)** 항목을 원문과 대조해 확정하세요.")
+    add("> 값 옆의 위치(doc:block, 쪽)는 `rfp.json`의 locator와 같습니다.")
+    add("")
+    add("## 입력 문서")
+    add("")
+    add("| ID | 파일 | 형식 | 분류 | 블록 수 | 경고 |")
+    add("|---|---|---|---|---|---|")
+    for d in docs:
+        add(f"| {d.doc_id} | {d.filename} | {d.format} | {d.role} | {len(d.blocks)} | {'; '.join(d.warnings) or '-'} |")
+    add("")
+    add("## 공고 기본정보")
+    add("")
+    add(f"- 사업명: {_v(n.title)}")
+    add(f"- 사업예산: {_v(n.budget_krw, lambda v: f'{v:,}원')}")
+    add(f"- 사업기간: {_v(n.period)}")
+    add(f"- 계약방법: {n.contract_method.value} (적용 프로필: `{profile_name}`)")
+    ratio = ev.tech_price_ratio.value if ev.tech_price_ratio else None
+    add(f"- 기술:가격 = {ratio[0]}:{ratio[1]}" if ratio else "- 기술:가격 = —(찾지 못함, 프로필 기본값 사용)")
+    add("")
+    add("## 일정")
+    add("")
+    if n.schedule:
+        add("| 일정 | 원문 이름표 | 날짜 | 원문 위치 |")
+        add("|---|---|---|---|")
+        for it in n.schedule:
+            lc = it.locators[0] if it.locators else None
+            where = lc.block_id + (f" p.{lc.page}" if lc.page else "") if lc else "-"
+            add(f"| {it.kind} | {it.label} | {span_text(it)} | {where} |")
+        add("")
+        add("> 정정공고로 바뀔 수 있습니다. 나라장터 공고의 일정을 기준으로 하세요. 남은 날은 `rfpgen status`가 보여 줍니다.")
+    else:
+        add("- 일정을 찾지 못했습니다 — 입찰공고문(제출 마감·질의 기간·설명회)을 함께 넣으면 읽습니다.")
+    add("")
+    add("## 작성지침")
+    add("")
+    add(f"- 본문 분량: {_v(g.main_page_limit, lambda v: f'{v}쪽')} / 요약본: {_v(g.summary_page_limit, lambda v: f'{v}쪽')}"
+        f" / 발표자료: {_v(g.presentation_page_limit, lambda v: f'{v}쪽')}")
+    add(f"- 쪽수 제외: {_v(g.count_exclusions, lambda v: ', '.join(v))}")
+    add(f"- 용지·방향: {_v(g.paper)} / {_v(g.orientation)}")
+    add(f"- 최소 글자 크기: 본문 {_v(g.min_font_pt, lambda v: f'{v:g}pt')} / 표 {_v(g.table_min_font_pt, lambda v: f'{v:g}pt')}")
+    add(f"- 제출 형식·용량: {_v(g.file_format)} / {_v(g.total_size_limit_mb, lambda v: f'{v}MB')}")
+    blind = g.blind
+    add(f"- 블라인드: {'예' if blind and blind.value else '아니오' if blind and blind.confidence >= 1 else '문구 없음(확인 필요)'}")
+    if g.presentation:
+        p = g.presentation.value
+        add(f"- 발표: {p.minutes or '?'}분, 질의응답 {p.qa_minutes or '?'}분, PM 직접 발표 {'예' if p.pm_must_present else '미기재'}")
+    if g.prescribed_toc:
+        prod = ", ".join(f"{c.number}.{c.title}({c.production})" for c in g.prescribed_toc.value)
+        add(f"- 지정 목차: {prod}")
+    if g.required_documents:
+        add(f"- 별지 서식 {len(g.required_documents)}종: " + ", ".join(f"{d.form_no}({d.name[:20]})" for d in g.required_documents[:12]))
+    add("")
+    add("## 평가표")
+    add("")
+    if ev.areas:
+        add("| 부문 | 구분 | 배점 | 항목(배점) |")
+        add("|---|---|---|---|")
+        for a in ev.areas:
+            items = ", ".join(f"{it.name}({it.points:g})" if it.points is not None else it.name for it in a.items)
+            add(f"| {a.name} | {a.kind} | {a.points:g} | {items} |" if a.points is not None else f"| {a.name} | {a.kind} | ? | {items} |")
+        add("")
+    else:
+        add("평가표를 찾지 못했습니다.")
+        add("")
+    if ev.rules:
+        kinds: dict[str, int] = {}
+        for r in ev.rules:
+            kinds[r.kind] = kinds.get(r.kind, 0) + 1
+        add(f"평가규칙(점수 매기는 방법, 본문이 답할 대상 아님) {len(ev.rules)}건: "
+            + ", ".join(f"{k} {v}" for k, v in kinds.items()) + " — `analysis.xlsx`의 평가규칙 시트")
+        add("")
+    add("## 입찰무효·평가제외·감점 사유")
+    add("")
+    stated = [c for c in rfp.compliance if c.origin == "stated"]
+    suggested = [c for c in rfp.compliance if c.origin == "suggested"]
+    for c in stated[:30]:
+        where = f" ({c.locators[0].doc_id} p.{c.locators[0].page})" if c.locators and c.locators[0].page else ""
+        add(f"- **{c.kind}**{f' [{c.related_check}]' if c.related_check else ''} {c.text[:160]}{where}")
+    if len(stated) > 30:
+        add(f"- … 외 {len(stated) - 30}건(`analysis.xlsx`)")
+    if suggested:
+        add("")
+        add("원문에는 없지만 확인을 권하는 사유(G1에서 채택 여부 결정):")
+        add("")
+        for c in suggested:
+            add(f"- {c.kind}: {c.text}")
+    if rfp.eligibility:
+        add("")
+        add(f"입찰참가자격 {len(rfp.eligibility)}줄 — `analysis.xlsx`의 무효·감점 사유 시트")
+    add("")
+    add("## 요구사항")
+    add("")
+    by_prefix: dict[str, int] = {}
+    for r in rfp.requirements:
+        by_prefix[r.prefix or "?"] = by_prefix.get(r.prefix or "?", 0) + 1
+    add(f"- 총 {len(rfp.requirements)}건: " + ", ".join(f"{k} {v}" for k, v in sorted(by_prefix.items())))
+    declared = report.stats.get("declared_requirements")
+    if declared:
+        add(f"- RFP 선언 요구사항 수: {declared}건")
+    grades = {k[-1]: v for k, v in report.stats.items() if k.startswith("grade_")}
+    if grades:
+        add("- 상세화 등급(휴리스틱 추정): " + ", ".join(f"{k} {grades[k]}" for k in "SABCD" if k in grades))
+    add("")
+    add(f"## 목차와 쪽수 예산 (출처: {outline.origin})")
+    add("")
+    add(f"본문 상한 {budget.main_page_limit}쪽({budget.main_page_limit_source}) = 고정 {budget.fixed_pages}쪽 + 배점 배분 {budget.distributable_pages}쪽 (정성 {budget.qualitative_points:g}점)")
+    add("")
+    add(f"쪽당 글자 수: 이론 상한 {budget.chars_per_page:,}자, 실효 {budget.effective_chars_per_page:,}자(개조식·표 비중 반영 제안값). "
+        "절별 목표 글자 수는 `analysis.xlsx` 목차·쪽수 시트")
+    add("")
+    add("| 번호 | 제목 | 배점 | 쪽수 | 요구사항 |")
+    add("|---|---|---|---|---|")
+    for node in outline.walk():
+        indent = "　" * (node.level - 1)
+        add(f"| {node.number} | {indent}{node.title} | {node.points:g} | {node.page_budget} | {len(node.requirements)} |")
+    add("")
+    add(f"추적표 커버리지: {trace.coverage():.0%} ({sum(1 for r in trace.rows if r.status != 'unmapped')}/{len(trace.rows)})")
+    add("")
+    if report.stats.get("llm_calls"):
+        st = report.stats
+        llm_reqs = sum(1 for r in rfp.requirements if r.origin == "llm")
+        add("## LLM 보조 추출")
+        add("")
+        add(f"- 호출 {st['llm_calls']}회: 입력 {st.get('llm_input_tokens', 0):,}, 캐시 읽기 {st.get('llm_cache_read_tokens', 0):,}, "
+            f"캐시 쓰기 {st.get('llm_cache_write_tokens', 0):,}, 출력 {st.get('llm_output_tokens', 0):,} 토큰")
+        add(f"- LLM이 추가한 서술형 요구사항(X-) {llm_reqs}건, 무효·감점 사유 "
+            f"{sum(1 for c in rfp.compliance if c.method == 'llm')}건 — 모두 근거 인용 검증을 통과한 값이며 G1 확인 대상입니다")
+        add("- 호출별 기록: `audit/llm_calls.jsonl`")
+        add("")
+    add("## 점검 결과")
+    add("")
+    if report.findings:
+        for f in sorted(report.findings, key=lambda f: ["error", "warning", "info"].index(f.severity)):
+            where = f" ({f.locators[0].doc_id} p.{f.locators[0].page})" if f.locators and f.locators[0].page else ""
+            add(f"- {_SEV[f.severity]} `{f.code}` {f.message}{where}")
+    else:
+        add("- 점검 항목 없음")
+    add("")
+    add(f"## 질의서 후보 {len(rfp.questions)}건")
+    add("")
+    add("`questions.md` 참고.")
+    add("")
+    return "\n".join(lines)
+
+
+def _object_particle(word: str) -> str:
+    """목적격 조사: 받침이 있으면 '을', 없으면 '를'(한글이 아니면 '을(를)')."""
+    last = word.rstrip(" )]")[-1:] if word.strip() else ""
+    if last and "가" <= last <= "힣":
+        return "을" if (ord(last) - 0xAC00) % 28 else "를"
+    return "을(를)"
+
+
+def questions_markdown(rfp: Rfp, from_drafts: list[tuple[str, str]] | None = None) -> str:
+    """질의서 초안. from_drafts: (절, 확인할 내용) — 초안을 쓰며 나온 발주기관 확인 사항(rfpgen draft가 덧붙임)."""
+    title = rfp.notice.title.value if rfp.notice.title else "(사업명 미확인)"
+    lines = [f"# 질의서 초안 — {title}", "",
+             "> 자동 생성 초안입니다. 질의 기간과 제출 양식은 공고를 따르세요. 중복·불필요한 질의는 삭제하세요.", ""]
+    asks = [x for x in rfp.notice.schedule if x.kind in ("질의", "설명회")]
+    if asks:
+        lines[-1:-1] = [f"> {x.label}: {span_text(x)}" for x in asks]
+    if from_drafts:
+        lines += ["## RFP 분석에서 나온 질의", ""]
+    for i, q in enumerate(rfp.questions, start=1):
+        where = ""
+        if q.locators:
+            lc = q.locators[0]
+            where = f" _(원문: {lc.doc_id}{f' p.{lc.page}' if lc.page else ''})_"
+        lines.append(f"{i}. **{q.target}** — {q.issue}")
+        lines.append(f"   - {q.question}{where}")
+    if from_drafts:
+        lines += ["", "## 초안을 쓰며 나온 확인 사항", "",
+                  "본문 초안에서 RFP로 정할 수 없어 `[확인 필요]`로 남긴 것 중 발주기관에 물어볼 것입니다. "
+                  "질의 마감 전에 묻고, 답을 받으면 본문의 해당 자리를 고치세요.", ""]
+        start = len(rfp.questions)
+        for k, (where, topic) in enumerate(from_drafts, start=start + 1):
+            lines.append(f"{k}. **{where}** — {topic}")
+            lines.append(f"   - {topic}{_object_particle(topic)} 구체적으로 알려 주시기 바랍니다.")
+    lines.append("")
+    return "\n".join(lines)

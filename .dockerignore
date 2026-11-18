@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+**/__pycache__
+**/*.egg-info
+sidecars/node/node_modules
+projects
+out
+research_notes
+reports
+docs
+tests
