@@ -1,12 +1,17 @@
 """HWPX(OWPML) 저수준 조작: 문단 글자 읽기·구간 바꾸기, 표 격자, 서식 영역 잘라내기.
 
 python-hwpx(Apache-2.0)의 문서 객체 위에서 lxml 요소를 직접 다룬다. 원본 서식의 글자 모양(charPr)을
-지키려고 문단 전체를 다시 쓰지 않고, 빈칸 구간의 글자만 바꾼다. 줄 배치 캐시(linesegarray)는
-python-hwpx가 저장할 때 내용이 바뀐 문단에서 지운다(구역을 dirty로 표시해야 한다).
+지키려고 문단 전체를 다시 쓰지 않고, 빈칸 구간의 글자만 바꾼다.
+
+줄 배치 캐시(linesegarray): 내용이 바뀐 문단의 원래 캐시는 python-hwpx가 저장할 때 지운다(구역을 dirty로
+표시해야 한다). 다만 캐시가 없는 문단을 rhwp가 다시 배치하면 짧은 줄이 넘친 것처럼 꺾여 양쪽으로 벌어지는
+일이 있어(조달청 별지 제21호 '수 요 기 관:' 줄), 한 줄이던 문단이 채운 뒤에도 한 줄에 넉넉히 들어가면
+같은 줄 정보로 캐시를 새로 써 둔다(refit_line_cache). 줄 수가 같으니 한글에서도 맞는 캐시다.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from lxml import etree
@@ -80,6 +85,47 @@ def _ensure_t(p: etree._Element) -> etree._Element:
     return t
 
 
+_WIDE = re.compile(r"[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]")
+
+
+def text_em(text: str) -> float:
+    """글자 폭 어림(전각=1em). 넘치지 않는 쪽으로 넉넉히 잡는다 — 반각 글자는 0.6em, 띄어쓰기 0.5em."""
+    w = 0.0
+    for ch in text:
+        if ch == " ":
+            w += 0.5
+        elif _WIDE.match(ch) or ord(ch) >= 0x2000:
+            w += 1.0
+        else:
+            w += 0.6
+    return w
+
+
+def refit_line_cache(p: etree._Element) -> None:
+    """글자를 바꾼 문단의 줄 배치 캐시를 다시 정한다: 한 줄 캐시였고 새 글자도 한 줄에 들어가면 새로 쓰고, 아니면 지운다."""
+    arr = p.find(f"{HP}linesegarray")
+    if arr is None:
+        return
+    segs = arr.findall(f"{HP}lineseg")
+    at = list(p).index(arr)
+    p.remove(arr)
+    if len(segs) != 1:
+        return
+    seg = segs[0]
+    try:
+        em = int(seg.get("textheight") or seg.get("vertsize") or 0)
+        width = int(seg.get("horzsize") or 0)
+    except ValueError:
+        return
+    text = p_text(p)
+    if em <= 0 or width <= 0 or "\n" in text or "\t" in text or text_em(text) * em > width * 0.9:
+        return
+    fresh = etree.Element(f"{HP}linesegarray")
+    line = etree.SubElement(fresh, f"{HP}lineseg", dict(seg.attrib))
+    line.set("textpos", "0")
+    p.insert(at, fresh)
+
+
 def replace_span(p: etree._Element, start: int, end: int, value: str) -> None:
     """문단 글자 [start, end)를 value로 바꾼다. value는 start가 걸린 조각의 글자 모양을 따른다."""
     segs = _segments(p)
@@ -115,6 +161,7 @@ def replace_span(p: etree._Element, start: int, end: int, value: str) -> None:
             else:
                 parent.text = (parent.text or "") + el.tail
         parent.remove(el)
+    refit_line_cache(p)
 
 
 # ---------------------------------------------------------------- 표 격자

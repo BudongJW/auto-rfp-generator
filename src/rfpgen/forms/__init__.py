@@ -9,7 +9,7 @@ KB·RFP·사람이 준 값으로 빈칸을 채워 out/forms/에 쓴다. 원본 �
   kb/projects.csv …        실적·인력·인증 목록 표
   kb/private/people.csv    (선택) 인력 실명 — 서식의 성명 칸에만 쓴다
   kb/private/forms.yaml    (선택) values: {이름표: 값} — 생성기가 모르는 칸(담당자 등)
-  project/forms.yaml       (선택) doc_types: {"7": 정량제안서}, skip: ["3"]
+  project/forms.yaml       (선택) doc_types: {"7": 정량제안서}, skip: ["3"], include: ["13"]
 출력
   out/forms/별지NN_제목.hwpx, out/forms/forms.json, out/forms/forms.md, checks/forms-*.json|md
 """
@@ -33,6 +33,8 @@ from .oxml import keep_region
 _KEY_IN_TEXT = re.compile(r"별지\s*(?:제\s*)?(\d{1,2})(?:\s*[-－의]\s*(\d{1,2}))?\s*호")
 _DOC_TYPES: tuple[FormDocType, ...] = ("정성제안서", "정량제안서", "하도급계획서", "기타문서")
 _QUANT = re.compile(r"실적|인력|기술자|경력|신용|재무|경영상태|인증|보유|정량|참여\s*인원")
+# 입찰자가 내지 않는 서식(평가위원·신고자용) — 기본으로 만들지 않고 알린다. project/forms.yaml include로 되살린다
+_NOT_BIDDER = re.compile(r"사전\s*접촉|평가\s*위원")
 
 
 def form_key(text: str) -> str | None:
@@ -159,13 +161,13 @@ def _load_overrides(kb_dir: Path | None) -> dict[str, str]:
     return {norm(str(k)): str(v) for k, v in (data.get("values") or {}).items() if v is not None}
 
 
-def _project_options(project: Path) -> tuple[dict[str, FormDocType], set[str]]:
+def _project_options(project: Path) -> tuple[dict[str, FormDocType], set[str], set[str]]:
     path = project / "forms.yaml"
     if not path.exists():
-        return {}, set()
+        return {}, set(), set()
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     types = {str(k): v for k, v in (data.get("doc_types") or {}).items() if v in _DOC_TYPES}
-    return types, {str(x) for x in data.get("skip") or []}
+    return types, {str(x) for x in data.get("skip") or []}, {str(x) for x in data.get("include") or []}
 
 
 def run_forms(project: Path, *, kb_dir: Path | None = None, date: dt.date | None = None) -> FormsReport:
@@ -181,7 +183,7 @@ def run_forms(project: Path, *, kb_dir: Path | None = None, date: dt.date | None
     report = FormsReport(run_id=f"forms-{run_id}", date=ctx.date.isoformat())
     blind = bool(rfp.guideline.blind and rfp.guideline.blind.value)
     toc_keys = _toc_keys(rfp)
-    type_over, skip = _project_options(project)
+    type_over, skip, include = _project_options(project)
     out_dir = project / "out" / "forms"
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("*.hwpx"):
@@ -194,6 +196,13 @@ def run_forms(project: Path, *, kb_dir: Path | None = None, date: dt.date | None
     for src in sources:
         r = src.region
         if r.key in skip:
+            continue
+        if _NOT_BIDDER.search(r.title) and r.key not in include:
+            skip.add(r.key)
+            report.findings.append(CheckFinding(
+                rule="FORM-SKIP", severity="info", basis="별지 서식", section_id=r.form_no,
+                message=f"{r.form_no}({r.title})는 평가위원·신고자가 쓰는 서식이라 만들지 않았습니다 — 필요하면 "
+                        f"project/forms.yaml의 include에 '{r.key}'를 넣으세요"))
             continue
         res = FormResult(key=r.key, form_no=r.form_no, title=r.title, source_file=src.file,
                          doc_type=type_over.get(r.key) or classify(r.title, r.key, toc_keys),

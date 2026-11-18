@@ -4,10 +4,13 @@
 1. 이름표 칸: 짧은 이름표(상호·대표자·사업자등록번호 …) 오른쪽 칸이 비었으면 그 칸, 아니면 아래 칸
 2. 목록 표: 머리글 행(사업명·발주기관·계약금액 / 성명·등급·경력 / 인증명·인증번호)을 보고 빈 행에
    KB 실적·인력·인증을 한 줄씩 넣는다. 행이 모자라면 마지막 빈 행을 복제해 늘린다.
-3. 문단: "상    호 :", "대 표 자 :          (인)" 같은 이름표-쌍점 빈칸과 "2025.   .   ." 같은 날짜 칸
+3. 문단: "상    호 :", "대 표 자 :          (인)" 같은 이름표-쌍점 빈칸, "2025.   .   ." 같은 날짜 칸,
+   "서약자 : ○○회사  대표 ○○○ (인)" 같은 서명자 견본
 
 채우지 않는 것: 서명·날인, 선택 칸(□), 모르는 이름표 — 모두 점검 결과로 남겨 사람이 처리한다.
 블라인드 서식(지정 목차가 가리키는 서식)에는 회사 식별 정보와 실명을 넣지 않는다.
+발주기관·발급기관이 쓰는 칸(증명서 발급기관, 수요기관 검토·평가점수)과 실적증명서의 과거 사업 칸은
+건드리지도 보고하지도 않는다 — 조달청 협상기준 별지 제15·16호 같은 실제 서식에서 확인한 모양이다.
 """
 
 from __future__ import annotations
@@ -19,10 +22,12 @@ from dataclasses import dataclass, field
 
 from lxml import etree
 
+from ..diagram.build import project_months
 from ..schemas.draft import CheckFinding
 from ..schemas.forms import FormFill, FormResult
 from ..schemas.kb import CompanyKB, _krw
 from ..schemas.rfp import Rfp
+from .locate import unspace
 from .oxml import HP, Cell, Grid, build_grid, p_text, replace_span, set_cell_value
 
 # ---------------------------------------------------------------- 빈칸·이름표 판별
@@ -50,6 +55,14 @@ def label_variants(label: str) -> list[str]:
     return [x for i, x in enumerate(out) if x and x not in out[:i]]
 
 
+def show_label(text: str) -> str:
+    """보고서에 쓸 이름표: 줄바꿈·자간 띄우기를 붙인다('사 업 명' → '사업명', '일련⏎번호' → '일련 번호')."""
+    parts = text.split()
+    if len(parts) >= 2 and all(len(x) == 1 for x in parts):
+        return "".join(parts)
+    return unspace(" ".join(parts))
+
+
 def is_blank(text: str) -> bool:
     return bool(_BLANK.match(text))
 
@@ -71,6 +84,16 @@ def label_like(text: str) -> bool:
     n = norm(text)
     return (1 <= len(n) <= 20 and bool(re.search(r"[가-힣a-z]", n)) and not is_blank(text)
             and not n.endswith("다.") and "\n" not in text.strip() and not PLACEHOLDER.search(text))
+
+
+def header_like(text: str) -> bool:
+    """표 머리글 칸. 좁은 칸에서 줄을 바꾼 머리글('일련⏎번호', '계약금액⏎(천원)')도 받는다."""
+    n = norm(text)
+    return (1 <= len(n) <= 24 and bool(re.search(r"[가-힣a-z]", n)) and not is_blank(text)
+            and not n.endswith("다.") and text.strip().count("\n") <= 2 and not PLACEHOLDER.search(text))
+
+
+_BARE_UNIT = re.compile(r"^\s*(?:개월|원|천원|백만원|억원|명|년|건|%)\s*$")
 
 
 def _before_suffix(value: str, suffix: str) -> str:
@@ -120,7 +143,7 @@ FIELDS: list[FieldDef] = [
     FieldDef("company.biz_no", ["사업자등록번호", "사업자번호", "사업자등록번호(법인)"], identifying=True),
     FieldDef("company.corp_no", ["법인등록번호", "법인번호"], identifying=True),
     FieldDef("company.address", ["주소", "소재지", "본사소재지", "사업장소재지", "본점소재지", "사업장주소", "본사주소",
-                                 "주소지", "영업소소재지"], identifying=True),
+                                 "주소지", "영업소소재지", "영업소재지", "영업소주소"], identifying=True),
     FieldDef("company.phone", ["전화번호", "전화", "연락처", "대표전화", "대표번호"], identifying=True),
     FieldDef("company.fax", ["팩스", "팩스번호", "fax", "팩시밀리", "전송"], identifying=True),
     FieldDef("company.email", ["이메일", "전자우편", "e-mail", "email", "이메일주소", "전자우편주소"], identifying=True),
@@ -132,10 +155,15 @@ FIELDS: list[FieldDef] = [
     FieldDef("rfp.title", ["사업명", "용역명", "건명", "입찰건명", "계약건명", "과업명", "공고명", "입찰명", "사업명칭"]),
     FieldDef("rfp.bid_no", ["공고번호", "입찰공고번호", "입찰번호"]),
     FieldDef("rfp.agency", ["발주기관", "수요기관", "발주처", "발주기관명"]),
+    FieldDef("rfp.submit_to", ["제출처", "제출기관"]),
+    FieldDef("rfp.period", ["사업기간", "용역기간", "과업기간", "계약기간", "수행기간"]),
     FieldDef("date", ["제출일", "제출일자", "작성일", "작성일자", "신청일", "신청일자", "일자", "제출연월일", "작성연월일"],
              date=True),
 ]
 _BY_LABEL = {lab: f for f in FIELDS for lab in f.labels}
+_RFP_ALIAS = {"submit_to": "agency"}
+# "(공동수급체 대표)상호", "공동수급체 대  표   상  호" — 공동수급이면 대표사, 단독이면 우리 회사다
+_JV_PREFIX = re.compile(r"^[(\s]*공\s*동\s*수\s*급\s*(?:체|인)?\s*(?:대\s*표\s*(?:사)?)?\s*\)?\s*")
 _ROLE_PREFIX = {"신청인", "제출자", "입찰자", "제안자", "제안사", "신청자", "입찰참가자", "수급인", "계약자", "회사", "본사",
                 "업체", "제출인", "신청업체", "제안업체", "서약자", "확약자", "신고인", "제출업체", "서약인"}
 
@@ -162,7 +190,8 @@ class FillContext:
         if key == "date":
             return fmt_date(self.date), "date"
         if key.startswith("rfp."):
-            ex = getattr(self.rfp.notice, key.split(".", 1)[1], None)
+            attr = key.split(".", 1)[1]
+            ex = getattr(self.rfp.notice, _RFP_ALIAS.get(attr, attr), None)
             return (str(ex.value) if ex is not None and ex.value else ""), "rfp"
         if self.kb is None:
             return "", "kb"
@@ -181,6 +210,9 @@ class FillContext:
         for k in range(1, len(words)):
             if all(w in _ROLE_PREFIX for w in words[:k]):
                 cands += label_variants("".join(words[k:]))
+        rest = _JV_PREFIX.sub("", _LEAD_MARK.sub("", label.strip()))
+        if rest and len(rest) < len(label.strip()):
+            cands += label_variants(rest)
         for c in cands:
             if c in self.overrides:
                 f = _BY_LABEL.get(c)
@@ -223,7 +255,7 @@ COLUMNS: dict[str, dict[str, list[str]]] = {
 }
 _STRONG = {"projects": {"name", "client", "amount"}, "people": {"name", "grade", "years", "certs"},
            "certifications": {"name", "number"}}
-_INDEX = {"순번", "번호", "연번", "no", "no.", "순위"}
+_INDEX = {"순번", "번호", "연번", "no", "no.", "순위", "일련번호", "순서"}
 _TOTAL = {"합계", "계", "소계", "총계", "합"}
 KIND_KO = {"projects": "유사사업 실적", "people": "참여 인력", "certifications": "인증"}
 
@@ -261,7 +293,7 @@ def _is_data_row(grid: Grid, r: int) -> bool:
 
 def plan_list(grid: Grid, r: int) -> ListPlan | None:
     row = grid.row_cells(r)
-    if len(row) < 2 or not all(label_like(c.text) or is_blank(c.text) for c in row):
+    if len(row) < 2 or not all(header_like(c.text) or is_blank(c.text) for c in row):
         return None
     best: tuple[int, str] | None = None
     for kind in COLUMNS:
@@ -275,7 +307,7 @@ def plan_list(grid: Grid, r: int) -> ListPlan | None:
     sub = r + 1
     if any(c.colspan > 1 and c.rowspan == 1 for c in row) and sub < grid.rows:
         sub_cells = grid.row_cells(sub)
-        if sub_cells and all(label_like(c.text) for c in sub_cells):
+        if sub_cells and all(header_like(c.text) for c in sub_cells):
             header_rows.append(sub)
     columns: dict[int, tuple[str, str]] = {}
     for col in range(grid.cols):
@@ -305,6 +337,54 @@ def plan_list(grid: Grid, r: int) -> ListPlan | None:
     return ListPlan(kind, header_rows, columns, data, total)
 
 
+# ---------------------------------------------------------------- 남이 쓰는 칸
+
+_ISSUER_GROUP = re.compile(r"발급|확인기관|증명기관|(?:수요|발주)기관(?:검토|평가|확인|작성|의견)|평가위원|심사위원")
+_RECORD_GROUP = re.compile(r"실적(?:내용|사항)|계약내용|납품내용")
+_AGENCY_LABEL = re.compile(r"^불?인정실적$|평가기준실적|평가점수|^발급(?:부서|일자?|번호|기관|자)|^확인자|검토의견|"
+                           r"(?:수요|발주)기관작성란")
+_SUBMITTED = re.compile(r"제출한?(?:납품|수행|용역)?실적|제출실적")
+_PAST_FORM = re.compile(r"실적\s*(?:증명|확인)서|경력\s*(?:증명|확인)서|이행\s*(?:실적|증명)서")
+_PAST_FIELDS = {"rfp.title", "rfp.agency", "rfp.period"}
+_SIGNER_TPL = re.compile(r"(?P<co>[○◯]{2,}\s*(?:주식회사|회사|업체|\(주\)))\s*대\s*표(?:\s*이\s*사|\s*자)?\s*"
+                         r"(?P<ceo>[○◯]{2,})")
+_JV_MEMBER = re.compile(r"[△▵]{2,}")
+
+
+def group_label(grid: Grid, cell: Cell) -> str:
+    """칸이 속한 묶음 이름: 첫 열에서 여러 행을 덮는 칸('신 청 인', '증 명 서⏎발급기관')의 글자."""
+    head = grid.owner(cell.row, 0)
+    if head is None or head.rowspan < 2 or not header_like(head.text):
+        return ""
+    return norm(head.text)
+
+
+def foreign_kind(grid: Grid, cell: Cell) -> str | None:
+    """우리가 쓰지 않는 칸: 'issuer'(발주기관·발급기관이 씀), 'record'(실적증명서의 과거 사업 내용)."""
+    g = group_label(grid, cell)
+    if g and _ISSUER_GROUP.search(g):
+        return "issuer"
+    if g and _RECORD_GROUP.search(g):
+        return "record"
+    if _AGENCY_LABEL.search(norm(cell.text)):
+        return "issuer"
+    return None
+
+
+def _amount_text(v: int, header: str) -> str:
+    """금액을 머리글 단위(백만원·천원·억원·원)에 맞춰 쓴다."""
+    h = norm(header)
+    if "백만원" in h:
+        return f"{v / 10**6:,.0f}"
+    if "천원" in h:
+        return f"{v / 10**3:,.0f}"
+    if "억원" in h:
+        return f"{v / 10**8:,.1f}"
+    if h.endswith(("(원)", "원)")):
+        return f"{v:,}"
+    return _krw(v)
+
+
 # ---------------------------------------------------------------- 채우기
 
 @dataclass
@@ -315,6 +395,14 @@ class _Filler:
     top_paragraphs: list                      # python-hwpx 최상위 문단 객체
     touched: set[int] = field(default_factory=set)       # 이미 보고·채운 문단 id(lxml 요소 id)
     reported_cells: set[int] = field(default_factory=set)
+    keep: list = field(default_factory=list)             # 격자를 살려 둬야 lxml 요소 id가 바뀌지 않는다
+    foreign: dict[str, list[str]] = field(default_factory=lambda: {"issuer": [], "record": []})
+    project_summary: tuple[int, int | None] | None = None    # 목록에 넣은 실적 (건수, 금액 합)
+
+    @property
+    def past_form(self) -> bool:
+        """실적·경력 증명서: 사업명·발주기관 칸은 증명받을 과거 사업의 것이다."""
+        return bool(_PAST_FORM.search(re.sub(r"\s+", "", self.result.title)))
 
     # 보고 ---------------------------------------------------------------
     def find(self, rule: str, severity: str, message: str) -> None:
@@ -324,7 +412,7 @@ class _Filler:
 
     def record(self, where: str, label: str, field_key: str, source: str, value: str, private: bool = False) -> None:
         shown = "(실명 — private/people.csv)" if private else value
-        self.result.fills.append(FormFill(where=where, label=label.strip()[:30], field=field_key,
+        self.result.fills.append(FormFill(where=where, label=show_label(label)[:30], field=field_key,
                                           source=source, value=shown))  # type: ignore[arg-type]
 
     # 값 결정 --------------------------------------------------------------
@@ -337,11 +425,17 @@ class _Filler:
             d = self.ctx.date if res.field == "date" else _parse_date(value)
             if d is not None:
                 value = fmt_date(d, skeleton)
+        if res.field == "rfp.period" and value and "개월" in skeleton:     # "사업기간 | 개월" 칸은 개월 수만
+            months, assumed = project_months(self.ctx.rfp)
+            value = "" if assumed else str(months)
         return res, value
 
     def _try_fill(self, label: str, where: str, apply: Callable[[str], None], skeleton: str) -> bool:
         res, value = self._value_for(label, skeleton)
         clean = label.strip().rstrip(":：").strip()
+        if res is not None and self.past_form and res.field in _PAST_FIELDS:
+            self.foreign["record"].append(show_label(clean))
+            return False
         if res is None:
             self.find("FORM-UNFILLED", "major", f"'{clean}' 칸을 채우지 못했습니다(모르는 이름표) — "
                                                 "private/forms.yaml의 values에 값을 주거나 직접 쓰세요")
@@ -360,19 +454,41 @@ class _Filler:
         return True
 
     # 1. 이름표 칸 --------------------------------------------------------
-    def fill_key_values(self, t_no: int, grid: Grid, skip_rows: set[int]) -> None:
+    def mark_foreign(self, grid: Grid) -> set[int]:
+        """발주기관·발급기관이 쓰는 칸과 실적증명서의 과거 사업 칸: 채우지도 보고하지도 않는다."""
+        out: set[int] = set()
+        for cell in sorted(grid.cells, key=lambda c: (c.row, c.col)):
+            kind = foreign_kind(grid, cell)
+            if kind is None:
+                continue
+            out.add(id(cell.el))
+            for p in cell.paragraphs:
+                self.touched.add(id(p))
+            text = cell.text.strip()
+            if re.search(r"[:：]", text):                       # "기관명:", "주  소:" — 쌍점 앞 이름표만
+                labels = [re.split(r"[:：]", line)[0] for line in text.split("\n") if re.search(r"[:：]", line)]
+            else:                                              # 문장·선택 칸("( )")은 이름표가 아니다
+                labels = [] if re.search(r"[.。]|\(\s*\)", text) else [text]
+            self.foreign[kind] += [show_label(x) for x in labels if header_like(x) and not x.strip().startswith("(")]
+        return out
+
+    def fill_key_values(self, t_no: int, grid: Grid, skip_rows: set[int], foreign: set[int] | None = None) -> None:
+        foreign = foreign or set()
         for cell in sorted(grid.cells, key=lambda c: (c.row, c.col)):
             text = cell.text.strip()
-            if (cell.row in skip_rows or cell.nested or not label_like(text)
+            if (cell.row in skip_rows or cell.nested or not label_like(text) or id(cell.el) in foreign
+                    or id(cell.el) in self.reported_cells                # 방금 채운 값 칸을 이름표로 다시 보지 않는다
                     or re.search(r"[:：]", text.rstrip(":： "))):       # "상호 : ○○" 한 칸 안 쌍은 문단 단계에서
                 continue
             target: Cell | None = None
             right = grid.right(cell)
-            if right is not None and right is not cell and not right.nested and fillable(right.text)[0]:
+            if (right is not None and right is not cell and not right.nested and id(right.el) not in foreign
+                    and (fillable(right.text)[0] or _BARE_UNIT.match(right.text))):
                 target = right
             else:
                 below = grid.below(cell)
                 if (below is not None and below is not cell and below.row not in skip_rows and not below.nested
+                        and id(below.el) not in foreign
                         and fillable(below.text)[0] and (right is None or label_like(right.text))
                         and self.ctx.resolve(text) is not None):
                     target = below
@@ -383,6 +499,8 @@ class _Filler:
                 self.touched.add(id(p))
             first = p_text(target.paragraphs[0]) if target.paragraphs else ""
             ok, a, b = fillable(first)
+            if not ok and _BARE_UNIT.match(first):        # "개월"만 있는 칸: 단위 앞에 값을 넣는다
+                ok, a, b = True, 0, 0
             if not ok:
                 continue
 
@@ -419,19 +537,7 @@ class _Filler:
             if fld in ("start", "end"):
                 return (getattr(rec, fld) or "").replace("-", "."), False
             if fld == "amount":
-                v = rec.amount_krw
-                if v is None:
-                    return "", False
-                h = norm(header)
-                if "백만원" in h:
-                    return f"{v / 10**6:,.0f}", False
-                if "천원" in h:
-                    return f"{v / 10**3:,.0f}", False
-                if "억원" in h:
-                    return f"{v / 10**8:,.1f}", False
-                if h.endswith("(원)") or h.endswith("원)"):
-                    return f"{v:,}", False
-                return _krw(v), False
+                return ("" if rec.amount_krw is None else _amount_text(rec.amount_krw, header)), False
             if fld == "tech":
                 return ", ".join(rec.tech), False
             return str(getattr(rec, fld, "") or ""), False
@@ -520,6 +626,9 @@ class _Filler:
                 self.record(f"표{t_no} 행{r}", header, f"{plan.kind}[{rec.id}].{fld}",
                             "private" if private else "kb", value, private=private)
         used = min(len(records), len(plan.data_rows))
+        if plan.kind == "projects":
+            amounts = [r.amount_krw for r in records[:used] if r.amount_krw is not None]
+            self.project_summary = (used, sum(amounts) if amounts else None)
         if plan.total_row is not None and plan.kind == "projects":
             self._fill_total(t_no, grid, plan, records[:used])
         self.find("FORM-LIST", "info", f"표{t_no}({what}): {used}건을 넣었습니다 — 서식이 정한 기간·건수·인정 기준에 맞는지 "
@@ -541,17 +650,49 @@ class _Filler:
             ok, a, b = fillable(first)
             if not ok:
                 continue
-
-            class _Sum:                                   # _cell_value가 쓰는 모양만 흉내 낸다
-                amount_krw = sum(amounts)
-
-            value, _ = self._cell_value("projects", _Sum, "amount", fld[1], 0)
+            value = _amount_text(sum(amounts), fld[1])
             set_cell_value(cell, a, b, value)
             self.record(f"표{t_no} 행{plan.total_row}", f"합계 {fld[1]}", "projects[*].amount_krw(합계)", "kb", value)
 
+    def fill_submitted_summary(self, t_no: int, grid: Grid) -> set[int]:
+        """'입찰자가 제출한 납품실적 | 건수 | 금액' 행(수행실적 총괄표): 앞 목록에 넣은 실적의 건수·금액 합."""
+        heads: dict[int, tuple[str, str]] = {}
+        for c in grid.row_cells(0):
+            n = re.sub(r"\(.*?\)", "", norm(c.text))
+            if n in ("건수", "건", "실적건수"):
+                heads[c.col] = ("count", c.text)
+            elif n.endswith("금액"):
+                heads[c.col] = ("amount", c.text)
+        rows: set[int] = set()
+        if not heads:
+            return rows
+        for r in range(1, grid.rows):
+            first = grid.owner(r, 0)
+            if first is None or first.row != r or not _SUBMITTED.search(norm(first.text)):
+                continue
+            rows.add(r)
+            if self.project_summary is None:
+                continue
+            count, total = self.project_summary
+            for cell in grid.row_cells(r):
+                h = heads.get(cell.col)
+                text = p_text(cell.paragraphs[0]) if cell.paragraphs else ""
+                ok, a, b = fillable(text)
+                if h is None or not ok or (h[0] == "amount" and total is None):
+                    continue
+                value = str(count) if h[0] == "count" else _amount_text(total, h[1])  # type: ignore[arg-type]
+                set_cell_value(cell, a, b, value)
+                for p in cell.paragraphs:
+                    self.touched.add(id(p))
+                self.record(f"표{t_no} r{r}c{cell.col}", f"{norm(first.text)[:12]} {norm(h[1])}",
+                            f"projects[*].{'count' if h[0] == 'count' else 'amount_krw'}(합계)", "kb", value)
+            self.find("FORM-LIST", "info", f"표{t_no}: 제출 실적 건수·금액은 위 목록에 넣은 실적으로 셈했습니다 — "
+                                           "목록을 고치면 함께 고치세요")
+        return rows
+
     def report_unknown_list(self, t_no: int, grid: Grid, r: int) -> bool:
         row = grid.row_cells(r)
-        if len(row) < 2 or not all(label_like(c.text) for c in row) or r + 1 >= grid.rows:
+        if len(row) < 2 or not all(header_like(c.text) for c in row) or r + 1 >= grid.rows:
             return False
         if not _is_data_row(grid, r + 1):
             return False
@@ -566,6 +707,9 @@ class _Filler:
         text = p_text(p)
         if not text.strip():
             return
+        if (tpl := _SIGNER_TPL.search(text)) is not None:
+            self._fill_signer(p, tpl, where)
+            text = p_text(p)
         if allow_date_line and (m := DATE_SKEL.match(text)) and (m.group("m") is None or m.group("d") is None):
             lead = len(text) - len(text.lstrip())
             value = fmt_date(self.ctx.date, text)
@@ -598,6 +742,24 @@ class _Filler:
         if edits:
             self.touched.add(id(p))
 
+    def _fill_signer(self, p: etree._Element, m: re.Match, where: str) -> None:
+        """"서약자 : ○○회사  대표 ○○○ (인)" 견본에 상호·대표자를 넣는다. 공동수급 구성원 줄(△△)은 사람이 정한다."""
+        edits: list[tuple[int, int, str]] = []
+        for group, label in (("co", "상호"), ("ceo", "대표자")):
+            span = m.span(group)
+
+            def _apply(v: str, span=span) -> None:
+                edits.append((*span, v))
+
+            self._try_fill(label, where, _apply, "")
+        for s, e, v in sorted(edits, reverse=True):
+            replace_span(p, s, e, v)
+        if edits:
+            self.touched.add(id(p))
+        if _JV_MEMBER.search(p_text(p)):
+            self.find("FORM-JV", "minor", "서명자 견본의 공동수급 구성원 줄(△△회사 …)은 단독 입찰이면 지우고, "
+                                          "공동수급이면 구성원 상호·대표자를 쓰세요")
+
 
 def _table_number(tables: list[etree._Element], tbl: etree._Element) -> int:
     for i, t in enumerate(tables, start=1):
@@ -616,28 +778,45 @@ def fill_region(section, ctx: FillContext, result: FormResult) -> None:
         grid = build_grid(tbl)
         if len(grid.cells) <= 1:
             continue
+        filler.keep.append(grid)
+        foreign = filler.mark_foreign(grid)
+
+        def _foreign_row(r: int, grid=grid, foreign=foreign) -> bool:
+            cells = grid.row_cells(r)
+            return bool(cells) and all(id(c.el) in foreign for c in cells)
+
         list_rows: set[int] = set()
         r = 0
         while r < grid.rows:
-            plan = plan_list(grid, r)
+            plan = None if _foreign_row(r) else plan_list(grid, r)
             if plan is not None:
                 grid, covered = filler.fill_list(t_no, tbl, grid, plan)
+                filler.keep.append(grid)
                 list_rows |= covered
                 r = max(covered) + 1
                 continue
             r += 1
         for r in range(grid.rows):
-            if r not in list_rows and filler.report_unknown_list(t_no, grid, r):
+            if r not in list_rows and not _foreign_row(r) and filler.report_unknown_list(t_no, grid, r):
                 list_rows |= {r} | {rr for rr in range(r + 1, grid.rows) if _is_data_row(grid, rr)}
-        filler.fill_key_values(t_no, grid, list_rows)
-    # 문단: 최상위 문단과 1~2칸짜리 표(쪽 테두리·서명란) 안 문단만 날짜 줄을 채운다
+        list_rows |= filler.fill_submitted_summary(t_no, grid)
+        filler.fill_key_values(t_no, grid, list_rows, foreign)
+    # 문단: 최상위 문단, 1~2칸짜리 표(쪽 테두리·서명란), 표 너비를 다 차지하는 칸(서식 전체를 감싼 표의
+    # '위와 같이 … 제출합니다 / 년 월 일 / 상호:' 행) 안 문단만 날짜 줄을 채운다. 발급기관 칸은 이미 빠졌다.
+    full_width = {id(c.el) for g in filler.keep for c in g.cells if c.colspan >= g.cols}
     for i, p in enumerate(sec_el.iter(f"{HP}p")):
         tc = next(p.iterancestors(f"{HP}tc"), None)
         small = True
         if tc is not None:
             tbl = next(tc.iterancestors(f"{HP}tbl"))
-            small = len(tbl.findall(f".//{HP}tc")) <= 2
+            small = len(tbl.findall(f"{HP}tr/{HP}tc")) <= 2 or id(tc) in full_width     # 안에 든 표의 칸은 세지 않는다
         filler.fill_paragraph(p, f"문단 {i}", allow_date_line=small)
+    for kind, msg in (("issuer", "발주기관·발급기관이 쓰는 칸"), ("record", "증명받을 과거 사업 칸")):
+        labels = list(dict.fromkeys(filler.foreign[kind]))
+        if labels:
+            more = f" 외 {len(labels) - 6}곳" if len(labels) > 6 else ""
+            tail = " — 실적마다 한 장씩 직접 쓰고 발주기관 확인을 받으세요" if kind == "record" else ""
+            filler.find("FORM-OTHERS", "info", f"{msg}({', '.join(labels[:6])}{more})은 비워 두었습니다{tail}")
     _final_checks(filler, sec_el)
     section.mark_dirty()
 
@@ -661,4 +840,5 @@ def _final_checks(filler: _Filler, sec_el: etree._Element) -> None:
             filler.find("FORM-BLIND-LEAK", "blocker", f"블라인드 서식에 회사 식별 표기가 있습니다: {', '.join(hits[:5])}")
 
 
-__all__ = ["FIELDS", "FillContext", "fill_region", "fmt_date", "fillable", "label_like", "plan_list"]
+__all__ = ["FIELDS", "FillContext", "fill_region", "fillable", "fmt_date", "foreign_kind", "header_like", "label_like",
+           "plan_list"]
