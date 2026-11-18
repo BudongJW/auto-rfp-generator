@@ -16,6 +16,7 @@ KB·RFP·사람이 준 값으로 빈칸을 채워 out/forms/에 쓴다. 원본 �
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import re
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ import yaml
 from ..schemas.draft import CheckFinding, CheckReport
 from ..schemas.forms import FormDocType, FormResult, FormsReport
 from ..schemas.rfp import Rfp, TocNode
-from .fill import FillContext, fill_region, norm
+from .fill import _PAST_FORM, FillContext, fill_region, norm
 from .locate import FormRegion, find_regions, match_marker, unspace
 from .oxml import keep_region
 
@@ -186,7 +187,7 @@ def run_forms(project: Path, *, kb_dir: Path | None = None, date: dt.date | None
     type_over, skip, include = _project_options(project)
     out_dir = project / "out" / "forms"
     out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("*.hwpx"):
+    for old in [*out_dir.glob("*.hwpx"), *(out_dir / "요청용").glob("*.hwpx")]:
         old.unlink()
     if kb is None:
         report.findings.append(CheckFinding(rule="FORM-KB", severity="major", basis="별지 서식",
@@ -213,6 +214,8 @@ def run_forms(project: Path, *, kb_dir: Path | None = None, date: dt.date | None
         target = out_dir / f"별지{num.zfill(2)}{'-' + sub_no if sub_no else ''}_{_safe(r.title)}.hwpx"
         doc.save_to_path(str(target))
         res.output = str(target.relative_to(project))
+        if _PAST_FORM.search(re.sub(r"\s+", "", r.title)):
+            _request_drafts(src, res, ctx, out_dir / "요청용", target.stem, project)
         report.forms.append(res)
 
     # 작성지침·지정 목차가 요구한 서식 중 못 찾은 것
@@ -242,6 +245,34 @@ def run_forms(project: Path, *, kb_dir: Path | None = None, date: dt.date | None
     return report
 
 
+def _request_drafts(src: _Source, res: FormResult, ctx: FillContext, out: Path, stem: str, project: Path,
+                    limit: int = 20) -> None:
+    """실적증명서처럼 발급기관이 확인·발급하는 서식: 제출 묶음에서 빼고, KB 실적마다 과거 사업 칸까지 채운 발급 요청용
+    초안을 한 장씩 만든다(out/forms/요청용/). 계약번호·지분율·발급기관 칸은 발주기관 확인 때 채운다."""
+    res.external = True
+    projects = sorted(ctx.kb.projects, key=lambda p: p.end or "", reverse=True) if ctx.kb is not None else []
+    if not projects:
+        res.findings.append(CheckFinding(rule="FORM-REQUEST", severity="info", section_id=res.form_no, basis="별지 서식",
+                                         message="발급기관이 확인·발급하는 서식이라 제출 묶음에 넣지 않습니다 — KB에 실적이 "
+                                                 "없어 발급 요청용 초안도 만들지 않았습니다"))
+        return
+    out.mkdir(parents=True, exist_ok=True)
+    for proj in projects[:limit]:
+        draft = FormResult(key=res.key, form_no=res.form_no, title=res.title, source_file=res.source_file,
+                           doc_type=res.doc_type)
+        doc, section = _extract(src)
+        fill_region(section, dataclasses.replace(ctx, record=proj), draft)
+        target = out / f"{stem}_{_safe(proj.id)}.hwpx"
+        doc.save_to_path(str(target))
+        res.requests.append(str(target.relative_to(project)))
+    more = f"(실적 {len(projects)}건 중 최근 {limit}건)" if len(projects) > limit else ""
+    res.findings.append(CheckFinding(
+        rule="FORM-REQUEST", severity="info", section_id=res.form_no, basis="별지 서식",
+        message=f"발급기관이 확인·발급하는 서식이라 제출 묶음에 넣지 않습니다. 실적마다 사업명·기간·금액을 채운 발급 요청용 "
+                f"초안 {len(res.requests)}장{more}을 out/forms/요청용/에 만들었습니다 — 계약번호·지분율·사업개요를 채워 "
+                "발주기관에 보내고, 발급받은 증명서를 스캔해 정량제안서와 함께 올리세요"))
+
+
 def load_forms_report(project: Path) -> FormsReport | None:
     path = Path(project) / "out" / "forms" / "forms.json"
     if not path.exists():
@@ -264,6 +295,8 @@ def forms_markdown(report: FormsReport) -> str:
             lines += [f"| {x.where} | {x.label} | {x.value} | {x.field} |" for x in f.fills]
         else:
             lines.append("채운 칸이 없습니다.")
+        if f.requests:
+            lines += ["", "발급 요청용 초안:", *[f"- `{x}`" for x in f.requests]]
         if f.findings:
             lines.append("")
             lines += [f"- **{x.severity}** `{x.rule}` {x.message}" for x in f.findings]

@@ -39,6 +39,8 @@ class FormResult(BaseModel):
     fills: list[FormFill] = Field(default_factory=list)
     added_rows: int = 0
     findings: list[CheckFinding] = Field(default_factory=list)
+    external: bool = False          # 발급기관이 확인·발급하는 서식(실적증명서 등) — 제출 묶음에 넣지 않는다
+    requests: list[str] = Field(default_factory=list)   # 발급 요청용 초안(실적마다 한 장, 프로젝트 기준 상대 경로)
 
 
 class FormsReport(BaseModel):

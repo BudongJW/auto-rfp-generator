@@ -335,6 +335,10 @@ def _package_forms(project: Path, sub: Path, raw_pdf: Path, title: str, rep: Che
     groups: dict[str, list[tuple[Path, str]]] = {}
     for f in report.forms:
         src = project / f.output
+        if f.external:                    # 실적증명서 등: 발급받은 증명서를 따로 스캔해 올린다
+            notes.append(f"{f.form_no} {f.title}: 발급기관이 확인·발급하는 서식이라 묶지 않았습니다 — 발급받은 증명서를 "
+                         "스캔해 함께 올리세요(요청용 초안: out/forms/요청용/)")
+            continue
         if not f.output or not src.exists():
             continue
         pdf = raw_pdf / "forms" / f"{src.stem}.pdf"

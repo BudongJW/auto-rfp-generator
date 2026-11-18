@@ -218,3 +218,33 @@ def test_real_form_17_example_values(real_forms):
     assert cells[(1, 4)] == "19,500,000"                                       # 지우지는 않는다
     others = [x for f in rep.forms if f.key != "17" for x in f.findings if x.rule == "FORM-EXAMPLE"]
     assert others == []                                                          # 순번·실적을 채운 표는 예시가 아니다
+
+
+def test_real_form_16_request_drafts(real_forms, tmp_path):
+    project, rep = real_forms
+    f16 = _form(rep, "16")
+    assert f16.external and [Path(x).name for x in f16.requests] == ["별지16_수행실적증명서_P-001.hwpx",
+                                                                      "별지16_수행실적증명서_P-002.hwpx"]
+    assert any(x.rule == "FORM-REQUEST" and "2장" in x.message for x in f16.findings)
+    cells = _cells(project / f16.requests[0], 1)
+    assert cells[(0, 2)] == "(주)예시정보" and cells[(3, 7)] == "가나시 민원과"          # 신청인·제출처는 그대로
+    assert cells[(4, 2)] == "통합민원시스템 구축"                                         # 증명받을 과거 사업
+    assert cells[(8, 3)] == "2024.03 ~ 2024.12" and cells[(8, 5)] == "1,250,000,000원" and cells[(8, 6)] == "2024.12"
+    assert cells[(8, 1)] == "" and cells[(8, 7)] == ""                                   # 계약번호·지분율은 비움
+    paras = _paras(project / f16.requests[0])
+    assert not any(re.match(r"\s*주\s*소\s*:", p) and "서울" in p for p in paras)         # 발급기관 칸은 그대로 비움
+    second = _cells(project / f16.requests[1], 1)
+    assert second[(4, 2)] == "행정정보 고도화"
+
+    # 제출 묶음에는 넣지 않는다(발급받은 증명서를 따로 올린다) — 변환기 없이 보려고 이 서식만 남긴 보고서로
+    from rfpgen.package import _package_forms
+    from rfpgen.schemas.draft import CheckReport
+    from rfpgen.schemas.forms import FormsReport
+
+    only = tmp_path / "proj"
+    (only / "out" / "forms").mkdir(parents=True)
+    (only / "out" / "forms" / "forms.json").write_text(
+        FormsReport(run_id="r", date="2026-12-01", forms=[f16]).model_dump_json(), encoding="utf-8")
+    notes: list[str] = []
+    docs = _package_forms(only, tmp_path / "sub", tmp_path / "pdf", "사업", CheckReport(run_id="r"), notes)
+    assert docs == [] and any("별지 제16호" in n and "발급받은 증명서" in n for n in notes)

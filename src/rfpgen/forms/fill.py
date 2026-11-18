@@ -185,6 +185,7 @@ class FillContext:
     overrides: dict[str, str] = field(default_factory=dict)    # private/forms.yaml values — 정규화한 이름표 → 값
     date: dt.date = field(default_factory=dt.date.today)
     max_add_rows: int = 20
+    record: object | None = None          # 실적증명서 발급 요청용 초안: 이 KB 실적 한 건으로 과거 사업 칸을 채운다
 
     def field_value(self, key: str) -> tuple[str, str]:
         if key == "date":
@@ -291,7 +292,7 @@ def _is_data_row(grid: Grid, r: int) -> bool:
     return bool(cells) and all(fillable(c.text)[0] or _INDEX_TEXT.match(c.text) for c in cells)
 
 
-def plan_list(grid: Grid, r: int) -> ListPlan | None:
+def plan_list(grid: Grid, r: int, relaxed: bool = False) -> ListPlan | None:
     row = grid.row_cells(r)
     if len(row) < 2 or not all(header_like(c.text) or is_blank(c.text) for c in row):
         return None
@@ -329,7 +330,7 @@ def plan_list(grid: Grid, r: int) -> ListPlan | None:
         if not _is_data_row(grid, rr):
             break
         data.append(rr)
-    if hits_n < 3 and len(data) < 2:      # [사업명|발주기관] 아래 빈칸 한 줄은 목록이 아니라 이번 사업 정보 칸이다
+    if hits_n < 3 and len(data) < 2 and not relaxed:  # [사업명|발주기관] 아래 빈칸 한 줄은 목록이 아니라 이번 사업 정보 칸
         return None
     nxt = (data[-1] if data else header_rows[-1]) + 1
     first = grid.owner(nxt, 0) if nxt < grid.rows else None
@@ -426,6 +427,13 @@ class _Filler:
             d = self.ctx.date if res.field == "date" else _parse_date(value)
             if d is not None:
                 value = fmt_date(d, skeleton)
+        rec = self.ctx.record
+        if rec is not None and res.field in _PAST_FIELDS:              # 요청용 초안: 과거 사업 값
+            start, end = (getattr(rec, "start", "") or "").replace("-", "."), (getattr(rec, "end", "") or "").replace("-", ".")
+            value = {"rfp.title": getattr(rec, "name", ""), "rfp.agency": getattr(rec, "client", ""),
+                     "rfp.period": f"{start} ~ {end}" if start and end else start or end}[res.field]
+            res = Resolved(f"projects[{getattr(rec, 'id', '')}]", "kb", value, False, False)
+            return res, value
         if res.field == "rfp.period" and value and "개월" in skeleton:     # "사업기간 | 개월" 칸은 개월 수만
             months, assumed = project_months(self.ctx.rfp)
             value = "" if assumed else str(months)
@@ -434,7 +442,7 @@ class _Filler:
     def _try_fill(self, label: str, where: str, apply: Callable[[str], None], skeleton: str) -> bool:
         res, value = self._value_for(label, skeleton)
         clean = label.strip().rstrip(":：").strip()
-        if res is not None and self.past_form and res.field in _PAST_FIELDS:
+        if res is not None and self.past_form and res.field in _PAST_FIELDS and self.ctx.record is None:
             self.foreign["record"].append(show_label(clean))
             return False
         if res is None:
@@ -460,7 +468,7 @@ class _Filler:
         out: set[int] = set()
         for cell in sorted(grid.cells, key=lambda c: (c.row, c.col)):
             kind = foreign_kind(grid, cell)
-            if kind is None:
+            if kind is None or (kind == "record" and self.ctx.record is not None):
                 continue
             out.add(id(cell.el))
             for p in cell.paragraphs:
@@ -515,6 +523,8 @@ class _Filler:
     # 2. 목록 표 ----------------------------------------------------------
     def _records(self, kind: str) -> list:
         kb = self.ctx.kb
+        if kind == "projects" and self.ctx.record is not None:
+            return [self.ctx.record]
         if kb is None:
             return []
         if kind == "projects":
@@ -538,7 +548,12 @@ class _Filler:
             if fld in ("start", "end"):
                 return (getattr(rec, fld) or "").replace("-", "."), False
             if fld == "amount":
-                return ("" if rec.amount_krw is None else _amount_text(rec.amount_krw, header)), False
+                if rec.amount_krw is None:
+                    return "", False
+                text = _amount_text(rec.amount_krw, header)
+                if self.ctx.record is not None and not re.search(r"원\)?$", norm(header)):
+                    text = f"{rec.amount_krw:,}원"            # 증명서는 원 단위로 적는다('계약금액(VAT 포함)')
+                return text, False
             if fld == "tech":
                 return ", ".join(rec.tech), False
             return str(getattr(rec, fld, "") or ""), False
@@ -593,7 +608,7 @@ class _Filler:
             if self._grow(tbl, grid, plan.data_rows[-1], add):
                 self.result.added_rows += add
                 grid = build_grid(tbl)
-                plan = plan_list(grid, plan.header_rows[0]) or plan
+                plan = plan_list(grid, plan.header_rows[0], relaxed=self.ctx.record is not None) or plan
             if need > self.ctx.max_add_rows:
                 self.find("FORM-LIST", "major",
                           f"표{t_no}({what}): {len(records)}건 중 일부만 넣었습니다 — 나머지는 직접 추가하세요")
@@ -811,7 +826,7 @@ def fill_region(section, ctx: FillContext, result: FormResult) -> None:
         list_rows: set[int] = set()
         r = 0
         while r < grid.rows:
-            plan = None if _foreign_row(r) else plan_list(grid, r)
+            plan = None if _foreign_row(r) else plan_list(grid, r, relaxed=ctx.record is not None)
             if plan is not None:
                 grid, covered = filler.fill_list(t_no, tbl, grid, plan)
                 filler.keep.append(grid)
@@ -838,7 +853,7 @@ def fill_region(section, ctx: FillContext, result: FormResult) -> None:
         labels = list(dict.fromkeys(filler.foreign[kind]))
         if labels:
             more = f" 외 {len(labels) - 6}곳" if len(labels) > 6 else ""
-            tail = " — 실적마다 한 장씩 직접 쓰고 발주기관 확인을 받으세요" if kind == "record" else ""
+            tail = " — 실적마다 한 장씩 발주기관 확인을 받습니다(발급 요청용 초안 참고)" if kind == "record" else ""
             filler.find("FORM-OTHERS", "info", f"{msg}({', '.join(labels[:6])}{more})은 비워 두었습니다{tail}")
     _final_checks(filler, sec_el)
     section.mark_dirty()
