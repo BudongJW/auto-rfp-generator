@@ -56,6 +56,7 @@ uv run rfpgen doctor --full
 - `rfpgen setup`은 PDF 변환기(Node 사이드카와 Chromium)를 설치하고, 빠진 준비물을 운영체제에 맞는 설치 명령과 함께 알려 줍니다.
 - `rfpgen doctor --full`은 한글이 든 작은 문서를 실제로 변환해 보고 기능별로 ✓·!·✗를 보여 줍니다. `!`는 그 기능만 못 쓴다는 뜻이고 나머지는 동작합니다(예: LibreOffice가 없으면 장표 PDF만 빠짐).
 - 매번 `uv run`을 붙이기 싫으면 `.venv`를 활성화하세요(Windows `.venv\Scripts\activate`, macOS·Linux `source .venv/bin/activate`).
+- `git clone` 대신 [릴리스](https://github.com/BudongJW/auto-rfp-generator/releases) 페이지에서 정해진 버전의 소스 압축('Source code')을 받아 같은 순서로 설치해도 됩니다. 분석·초안·서식만 쓸 거라면 릴리스의 휠 파일을 `uv tool install ./rfpgen-<버전>-py3-none-any.whl`로 설치해도 됩니다(PDF 단계는 건너뜀). 버전별 변경은 [CHANGELOG.md](CHANGELOG.md)에 있습니다.
 
 ---
 

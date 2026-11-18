@@ -35,8 +35,19 @@ def _utf8_output() -> None:
                 pass
 
 
+def _version(value: bool) -> None:
+    if value:
+        from . import __version__
+
+        typer.echo(f"rfpgen {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
-def _main() -> None:
+def _main(
+    version: Annotated[bool, typer.Option("--version", "-V", help="버전을 보여 주고 끝낸다", callback=_version,
+                                          is_eager=True)] = False,
+) -> None:
     _utf8_output()
 
 

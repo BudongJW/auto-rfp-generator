@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# 릴리스: v<버전> 태그를 올리면 테스트 → 휠·소스 묶음 빌드 → CHANGELOG.md의 해당 절로 GitHub 릴리스를 만든다.
+# v<버전>-rc.N 꼴이면 사전 릴리스로 올린다. Docker 이미지는 여기서 올리지 않는다(README의 직접 빌드 안내).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: 태그·버전·변경 기록 확인
+        run: uv run --no-project python scripts/release_notes.py --check "$GITHUB_REF_NAME"
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+      - run: uv build
+      - name: 설치해 보기
+        run: |
+          uv venv /tmp/check
+          uv pip install --python /tmp/check/bin/python dist/*.whl
+          /tmp/check/bin/rfpgen --version
+      - name: 릴리스 노트
+        run: uv run --no-project python scripts/release_notes.py "$GITHUB_REF_NAME" > notes.md
+      - name: GitHub 릴리스 만들기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz \
+            --title "rfpgen ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag $flags
