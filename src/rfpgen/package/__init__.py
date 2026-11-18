@@ -107,6 +107,7 @@ class PackageResult:
     check: CheckReport
     checklist: Path
     notes: list[str] = field(default_factory=list)
+    crossref: Path | None = None          # 조견표(평가항목별 해당 쪽수) XLSX
 
 
 def _f(rep: CheckReport, rule: str, severity: str, message: str, *, basis: str = "", provisional: bool = False) -> None:
@@ -131,6 +132,9 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
         old.unlink()
     docs: list[PackagedDoc] = []
     notes: list[str] = []
+    crossref: Path | None = None
+    for old in sub.glob("조견표.*"):
+        old.unlink()
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     rep = CheckReport(run_id=f"package-{run_id}")
     for i, (doc_type, src) in enumerate(sources, start=1):
@@ -149,6 +153,8 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
         dst = sub / f"{i:02d}_{doc_type}.pdf"   # 파일 이름에 회사명을 넣지 않는다
         marks = _proposal_bookmarks(project, raw) if src.suffix == ".hwpx" else None
         info = clean_pdf(raw, dst, title=f"{title} {doc_type}", bookmarks=marks)
+        if src.suffix == ".hwpx":
+            crossref = _write_crossref(project, rfp, marks or [], info.pages, sub, title)
         docs.append(PackagedDoc(doc_type, src, dst, info.pages, info.size_bytes, info.fonts))
     del avail
     form_docs = _package_forms(project, sub, raw_pdf, title, rep, notes)
@@ -247,11 +253,27 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
     (check_dir / f"{rep.run_id}.md").write_text(report_markdown(rep), encoding="utf-8")
 
     checklist = sub / "제출전점검표.md"
-    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind, bool(form_docs)), encoding="utf-8")
+    checklist.write_text(_checklist(title, docs, rep, lim_mb, blind, bool(form_docs), crossref), encoding="utf-8")
     (sub / "manifest.json").write_text(json.dumps([
         {"doc_type": d.doc_type, "file": d.pdf.name, "pages": d.pages, "bytes": d.size_bytes, "source": str(d.source.name)}
         for d in docs], ensure_ascii=False, indent=2), encoding="utf-8")
-    return PackageResult(docs=docs, check=rep, checklist=checklist, notes=notes)
+    return PackageResult(docs=docs, check=rep, checklist=checklist, notes=notes, crossref=crossref)
+
+
+def _write_crossref(project: Path, rfp, marks: list[Bookmark], pages: int, sub: Path, title: str) -> Path | None:
+    """조견표(조달청 세부기준 제6조의2③): 평가항목별 해당 목차·쪽. submission/조견표.xlsx·.md"""
+    from .crossref import build_crossref, build_toc, crossref_markdown, write_crossref_xlsx
+
+    path = project / "plan" / "outline.json"
+    if not path.exists():
+        return None
+    outline = Outline.model_validate_json(path.read_text(encoding="utf-8"))
+    toc = build_toc(outline, marks, pages)
+    rows = build_crossref(outline, rfp, toc)
+    xlsx = sub / "조견표.xlsx"
+    write_crossref_xlsx(xlsx, toc, rows)
+    (sub / "조견표.md").write_text(crossref_markdown(title, toc, rows), encoding="utf-8")
+    return xlsx
 
 
 def _proposal_bookmarks(project: Path, pdf: Path) -> list[Bookmark]:
@@ -316,7 +338,7 @@ def _package_forms(project: Path, sub: Path, raw_pdf: Path, title: str, rep: Che
 
 
 def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: int, blind: bool,
-               has_forms: bool = False) -> str:
+               has_forms: bool = False, crossref: Path | None = None) -> str:
     total = sum(d.size_bytes for d in docs)
     lines = [f"# 제출 전 점검표 — {title}", "", f"점검 실행: {rep.run_id}", "",
              "| 문서구분(나라장터) | 파일 | 쪽수 | 용량 |", "|---|---|---|---|"]
@@ -332,7 +354,10 @@ def _checklist(title: str, docs: list[PackagedDoc], rep: CheckReport, lim_mb: in
               "- [ ] 나라장터 제출 화면에서 파일마다 문서구분(정성제안서·제안요약서·발표자료·정량제안서·하도급 계획서·기타)을 맞게 지정했다",
               ("- [ ] 별지 서식 PDF의 빈칸·선택 칸(□)·서명·날인을 확인하고, 날인이 필요한 서식은 날인본으로 바꿨다(out/forms/forms.md)"
                if has_forms else "- [ ] 정량제안서·별지 서식·하도급 계획서를 공고 양식으로 따로 준비해 함께 올렸다"),
-              "- [ ] 가격입찰서를 따로 제출했다(제안서나 가격입찰서 중 하나라도 빠지면 입찰 무효)",
+              "- [ ] 가격입찰서를 따로 제출했다(공고에 따라 제안서나 가격입찰서 중 하나라도 빠지면 입찰 무효)",
+              ("- [ ] 조견표(목차·평가항목별 해당 쪽수)를 제출기한까지 시스템에 등록했다 — `submission/조견표.xlsx` "
+               "(조달청 세부기준 제6조의2③, 쪽은 최종 PDF로 다시 확인)" if crossref else
+               "- [ ] 조견표(목차·평가항목별 해당 쪽수)를 만들어 시스템에 등록했다(조달청 세부기준 제6조의2③)"),
               "- [ ] 임시저장 때 파일이 암호화되고 최종 제출 뒤에는 수정·재제출할 수 없음을 알고 마감 전에 여유 있게 제출했다",
               "- [ ] PDF를 열어 표·그림·글꼴이 깨지지 않았는지 쪽마다 확인했다(서버 렌더는 한글 화면과 다를 수 있음)",
               "", "확인자: ________________  일시: ________________", ""]

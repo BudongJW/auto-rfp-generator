@@ -124,6 +124,41 @@ def test_heading_bookmarks_prefer_whole_line(tmp_path):
                                                      (1, "1. Schedule", 3)]
 
 
+def test_crossref_pages_per_eval_item():
+    """조견표: 절 시작·끝 쪽(다음 같은 단계 책갈피 앞 쪽, 찍힌 번호 = PDF 순서 + 1)과 평가항목별 해당 절."""
+    from rfpgen.package.crossref import build_crossref, build_toc, crossref_markdown
+    from rfpgen.render.pdf import Bookmark
+    from rfpgen.schemas.plan import Outline, OutlineNode
+    from rfpgen.schemas.rfp import EvalArea, EvalItem, Rfp
+
+    def node(id_, number, title, level, items=(), children=()):
+        return OutlineNode(id=id_, number=number, title=title, level=level, eval_items=list(items), children=list(children))
+
+    outline = Outline(origin="default_template", chapters=[
+        node("C1", "Ⅰ.", "제안 개요", 1, children=[node("S-1-1", "Ⅰ.1", "제안 배경", 2)]),
+        node("C3", "Ⅲ.", "전략 및 방법론", 1, children=[node("S-3-1", "Ⅲ.1", "사업 이해도", 2, ["A02-01"]),
+                                                    node("S-3-2", "Ⅲ.2", "추진 전략", 2, ["A02-02"])]),
+    ])
+    marks = [Bookmark("Ⅰ. 제안 개요", 1, 0), Bookmark("1. 제안 배경", 1, 1), Bookmark("Ⅲ. 전략 및 방법론", 3, 0),
+             Bookmark("1. 사업 이해도", 3, 1), Bookmark("2. 추진 전략", 7, 1)]
+    toc = build_toc(outline, marks, total_pages=10)
+    assert [(t.number, t.first, t.last) for t in toc] == [("Ⅰ.", 2, 3), ("Ⅰ.1", 2, 3), ("Ⅲ.", 4, 10), ("Ⅲ.1", 4, 7),
+                                                         ("Ⅲ.2", 8, 10)]
+    rfp = Rfp()
+    rfp.evaluation.areas = [EvalArea(id="A01", name="수행능력", kind="정량", points=20,
+                                     items=[EvalItem(id="A01-01", name="유사사업 수행실적", points=10)]),
+                            EvalArea(id="A02", name="전략 및 방법론", kind="정성", points=20,
+                                     items=[EvalItem(id="A02-01", name="사업 이해도", points=10),
+                                            EvalItem(id="A02-02", name="추진 전략", points=10),
+                                            EvalItem(id="A02-03", name="위험 관리", points=5)])]
+    rows = build_crossref(outline, rfp, toc)
+    assert [(r.item, [s.number for s in r.sections]) for r in rows] == [
+        ("사업 이해도", ["Ⅲ.1"]), ("추진 전략", ["Ⅲ.2"]), ("위험 관리", [])]          # 정성 항목만
+    md = crossref_markdown("사업", toc, rows)
+    assert "| 전략 및 방법론 | 사업 이해도 | 10 | Ⅲ.1 사업 이해도 | 4~7 |" in md
+    assert "| 전략 및 방법론 | 위험 관리 | 5 | [확인 필요: 연결된 목차 없음] | |" in md
+
+
 def test_clean_pdf_strips_metadata(tmp_path):
     pytest.importorskip("reportlab")
     from reportlab.pdfgen import canvas
@@ -196,6 +231,9 @@ def test_package_end_to_end_and_checks(drafted):
     assert "FACT-001" in rules                                        # 초안 단계 점검을 이어 붙였다
     checklist = res.checklist.read_text(encoding="utf-8")
     assert "가격입찰서를 따로 제출했다" in checklist and "01_정성제안서.pdf" in checklist
+    assert res.crossref is not None and res.crossref.exists() and "submission/조견표.xlsx" in checklist   # 조견표
+    xref = (project / "submission" / "조견표.md").read_text(encoding="utf-8")
+    assert "| 기술 및 기능 | 기능 요구사항 | 15 | Ⅳ.1 기능 요구사항 |" in xref and "[확인 필요: 쪽 없음]" not in xref
 
     # RFP 상한을 줄이면 정확한 쪽수·용량으로 막힌다
     rfp_path = sorted(project.glob("rfp/rfp.v*.json"))[-1]

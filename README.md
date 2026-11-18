@@ -205,7 +205,7 @@ uv run rfpgen gate projects/제안요청서
 uv run rfpgen gate projects/제안요청서 G1 --by 홍길동
 ```
 
-G1 분석 확정 → G2 목차·매핑 확정 → G3 전략 확정 → G4 절 승인 → G5 제출 승인(점검 blocker 0건) 순서입니다. 제출은 `submission/` 폴더의 PDF를 나라장터에서 문서구분에 맞게 직접 올립니다. 가격입찰서는 따로 냅니다.
+G1 분석 확정 → G2 목차·매핑 확정 → G3 전략 확정 → G4 절 승인 → G5 제출 승인(점검 blocker 0건) 순서입니다. 제출은 `submission/` 폴더의 PDF를 나라장터에서 문서구분에 맞게 직접 올립니다. 가격입찰서는 따로 냅니다. 조달청 사업은 목차와 평가항목별 해당 쪽수를 적은 조견표를 제출기한까지 시스템에 등록해야 하므로 `submission/조견표.xlsx`를 씁니다(쪽은 최종 PDF로 다시 확인).
 
 ### ⑥ 정정공고가 나오면
 
@@ -281,7 +281,7 @@ uv run rfpgen start 제안요청서.hwp --kb kb --llm
 | `out/figures/` | 도식 그림(SVG·PNG) |
 | `out/forms/` | 채운 별지 서식(서식별 HWPX)과 확인할 것 |
 | `out/summary.pptx`, `out/presentation.pptx`, `out/script.md` | 요약본, 발표자료, 발표 대본·예상 질문 |
-| `submission/` | 제출용 PDF(파일 이름에 회사명 없음)와 제출 전 점검표 |
+| `submission/` | 제출용 PDF(파일 이름에 회사명 없음, 장·절 책갈피), 제출 전 점검표, 조견표(평가항목별 해당 쪽수 — 시스템 등록용) |
 | `checks/` | 단계별 점검 결과 |
 
 ---

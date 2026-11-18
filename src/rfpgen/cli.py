@@ -395,6 +395,8 @@ def package_cmd(
                f"minor {rep.count('minor')}")
     for n in res.notes:
         typer.secho(f"  - {n}", fg=typer.colors.YELLOW)
+    if res.crossref:
+        typer.echo(f"  조견표(평가항목별 쪽수, 시스템 등록용): {res.crossref}")
     typer.echo(f"  제출 전 점검표: {res.checklist}")
 
 
