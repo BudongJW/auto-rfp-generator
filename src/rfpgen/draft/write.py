@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from pydantic import BaseModel
@@ -259,19 +260,38 @@ def llm_section(inp: DraftInputs, node: OutlineNode, gateway: LLMGateway, profil
 
 def write_sections(inp: DraftInputs, gateway: LLMGateway | None, profile: Profile, share_kb: bool,
                    only: set[str] | None, errors: list[str]) -> list[SectionDraft]:
-    """배점이 큰 절부터 쓴다(예산이 다하면 고배점 절이 먼저 완성되도록)."""
+    """배점이 큰 절부터 쓴다. LLM이면 첫 절을 혼자 보내 공통 접두부(RFP 요약) 캐시를 만들고 인증·모델 문제를 먼저
+    드러낸 뒤, 나머지는 llm.tasks.section.parallel 개씩 동시에 보낸다(결과·오류 순서는 배점 순으로 고정)."""
     nodes = [n for n in leaf_sections(inp.outline) if only is None or n.id in only]
     order = sorted(nodes, key=lambda n: -n.points)
-    drafts: dict[str, SectionDraft] = {}
-    for node in order:
-        if gateway is None:
-            drafts[node.id] = skeleton_section(inp, node)
-            continue
+    if gateway is None or not order:
+        return [skeleton_section(inp, n) for n in nodes]
+    llm = gateway
+
+    def one(node: OutlineNode) -> tuple[SectionDraft, LLMError | None]:
         try:
-            drafts[node.id] = llm_section(inp, node, gateway, profile, share_kb)
+            return llm_section(inp, node, llm, profile, share_kb), None
         except LLMError as exc:
-            errors.append(f"{node.number} {node.title}: {exc}")
-            drafts[node.id] = skeleton_section(inp, node)
-            if "인증" in str(exc) or "모델을 정하지 못했" in str(exc):
-                gateway = None  # 남은 절은 골격으로
+            return skeleton_section(inp, node), exc
+
+    drafts: dict[str, SectionDraft] = {}
+    first, rest = order[0], order[1:]
+    drafts[first.id], exc = one(first)
+    results: list[tuple[SectionDraft, LLMError | None]] = []
+    if exc is not None:
+        errors.append(f"{first.number} {first.title}: {exc}")
+        if "인증" in str(exc) or "모델을 정하지 못했" in str(exc):
+            results = [(skeleton_section(inp, n), None) for n in rest]      # 남은 절은 골격으로
+    if not results and rest:
+        workers = max(1, int(profile.value("llm.tasks")["section"].get("parallel", 1) or 1))
+        if workers == 1:
+            results = [one(n) for n in rest]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(one, rest))
+    for node, (draft, err) in zip(rest, results, strict=True):
+        drafts[node.id] = draft
+        if err is not None:
+            errors.append(f"{node.number} {node.title}: {err}")
     return [drafts[n.id] for n in nodes]
+

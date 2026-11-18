@@ -287,3 +287,51 @@ def test_short_llm_section_gets_one_expansion(project, kb_dir, profile):
     run_draft(project, profile.merged({"llm": {"tasks": {"value": tasks}}}, "test"), kb_dir=kb_dir, provider=fake,
               refresh_storyboard=True)
     assert not [c for c in fake.calls if c.task == "draft.section.expand"]
+
+
+class SlowFake(WriterFake):
+    """동시에 몇 개가 들어오는지 잰다."""
+
+    def __init__(self) -> None:
+        import threading
+
+        super().__init__()
+        self.lock = threading.Lock()
+        self.active = 0
+        self.peak = 0
+        self.first_alone = None
+
+    def complete(self, call, json_schema):
+        import time
+
+        with self.lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            if call.task == "draft.section" and self.first_alone is None:
+                self.first_alone = self.active == 1
+        time.sleep(0.05)
+        try:
+            return super().complete(call, json_schema)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_sections_run_in_parallel_after_first(project, kb_dir, profile):
+    fake = SlowFake()
+    res = run_draft(project, profile, kb_dir=kb_dir, provider=fake)
+    assert fake.first_alone and fake.peak > 1                      # 첫 절은 혼자, 나머지는 동시에
+    assert all(d.origin == "llm" for d in res.drafts)
+    from rfpgen.draft.context import leaf_sections
+    from rfpgen.schemas.plan import Outline
+
+    outline = Outline.model_validate_json((project / "plan" / "outline.json").read_text(encoding="utf-8"))
+    assert [d.section_id for d in res.drafts] == [n.id for n in leaf_sections(outline)]   # 결과는 목차 순서
+    lines = (project / "audit" / "llm_calls.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == len(fake.calls) and all(json.loads(x)["status"] == "ok" for x in lines)   # 줄이 섞이지 않는다
+    tasks = dict(profile.value("llm.tasks"))
+    tasks["section"] = {**tasks["section"], "parallel": 1}
+    fake = SlowFake()
+    run_draft(project, profile.merged({"llm": {"tasks": {"value": tasks}}}, "test"), kb_dir=kb_dir, provider=fake,
+              refresh_storyboard=True)
+    assert fake.peak == 1

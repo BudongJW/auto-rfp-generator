@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 from .gateway import LLMCall, LLMError, ProviderReply
@@ -57,16 +58,22 @@ class AnthropicProvider:
         self._model = model or os.environ.get("RFPGEN_LLM_MODEL") or None
         self.use_fallbacks = use_fallbacks
         self.timeout = timeout
+        self._lock = threading.RLock()        # 여러 스레드가 처음 부를 때 클라이언트·모델을 한 번만 정한다
 
     @property
     def client(self) -> Any:
-        if self._client is None:
-            import anthropic
+        with self._lock:
+            if self._client is None:
+                import anthropic
 
-            self._client = anthropic.Anthropic(timeout=self.timeout, **client_options())
-        return self._client
+                self._client = anthropic.Anthropic(timeout=self.timeout, **client_options())
+            return self._client
 
     def resolve_model(self) -> str:
+        with self._lock:
+            return self._resolve_model()
+
+    def _resolve_model(self) -> str:
         if self._model:
             return self._model
         try:

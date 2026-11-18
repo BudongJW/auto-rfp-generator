@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -98,13 +99,16 @@ class LLMGateway:
         self.audit_path = audit_path
         self.usage = Usage()
         self.retries: list[str] = []          # 잘려서 상한을 늘려 다시 보낸 기록
+        self._lock = threading.Lock()         # 절 초안을 여러 스레드로 보낼 때 사용량·감사 로그를 지킨다
 
     def _audit(self, record: dict[str, Any]) -> None:
         if self.audit_path is None:
             return
-        self.audit_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.audit_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with self._lock:
+            self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.audit_path.open("a", encoding="utf-8") as f:
+                f.write(line)
 
     def run(self, call: LLMCall, schema: type[T]) -> tuple[T, ProviderReply]:
         """한 번 호출한다. 출력이 max_tokens에서 잘리면(사고 토큰도 상한에 포함) 상한을 두 배(최대 128K)로 한 번 더 보낸다."""
@@ -114,7 +118,8 @@ class LLMGateway:
             if call.max_tokens >= MAX_OUTPUT_TOKENS:
                 raise
             bigger = replace(call, max_tokens=min(call.max_tokens * 2, MAX_OUTPUT_TOKENS))
-            self.retries.append(f"{call.task}: 출력이 {call.max_tokens:,}토큰에서 잘려 {bigger.max_tokens:,}토큰으로 다시 요청")
+            with self._lock:
+                self.retries.append(f"{call.task}: 출력이 {call.max_tokens:,}토큰에서 잘려 {bigger.max_tokens:,}토큰으로 다시 요청")
             return self._run_once(bigger, schema)
 
     def _run_once(self, call: LLMCall, schema: type[T]) -> tuple[T, ProviderReply]:
@@ -135,7 +140,8 @@ class LLMGateway:
             record.update(status="error", error=str(exc)[:500], seconds=round(time.monotonic() - started, 2))
             self._audit(record)
             raise
-        self.usage.add(reply.usage)
+        with self._lock:
+            self.usage.add(reply.usage)
         record.update(model=reply.model, stop_reason=reply.stop_reason, usage=reply.usage, request_id=reply.request_id,
                       fallback_used=reply.fallback_used, seconds=round(time.monotonic() - started, 2))
         if reply.stop_reason == "refusal":

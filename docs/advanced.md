@@ -40,7 +40,10 @@ llm:
 
 단가는 Anthropic 공개 가격표를 따르고, 실제 청구액은 Console에서 확인합니다.
 
-## LLM 절 초안 분량 보강
+## LLM 절 초안: 동시 호출·분량 보강
+
+본문 절은 배점 순으로 첫 절을 혼자 보낸 뒤(공통 RFP 요약을 캐시에 올리고 인증 문제를 먼저 확인) 나머지를 기본 3개씩 동시에 보냅니다. 사용량 한도(rate limit) 오류가 나면 `parallel`을 줄이세요.
+
 
 Claude가 쓴 절이 목표 최소 글자 수(쪽수 예산에서 계산)의 0.8배보다 짧으면, 1차 초안을 주고 한 번 더 써서 보강합니다(호출이 하나 늘어남). 끄거나 기준을 바꾸려면 조직 프로필에 적습니다.
 
@@ -48,7 +51,7 @@ Claude가 쓴 절이 목표 최소 글자 수(쪽수 예산에서 계산)의 0.8
 llm:
   tasks:
     value:
-      section: {effort: high, max_tokens: 32000, runs: 1, expand_below: 0}   # 0이면 보강하지 않음
+      section: {effort: high, max_tokens: 32000, runs: 1, expand_below: 0, parallel: 1}   # 보강 끔, 차례로
     status: user
 ```
 
