@@ -335,3 +335,33 @@ def test_sections_run_in_parallel_after_first(project, kb_dir, profile):
     run_draft(project, profile.merged({"llm": {"tasks": {"value": tasks}}}, "test"), kb_dir=kb_dir, provider=fake,
               refresh_storyboard=True)
     assert fake.peak == 1
+
+
+def test_data_requests_drop_rfp_content_and_merge():
+    from rfpgen.draft.write import merge_requests
+    from rfpgen.schemas.draft import DataRequest
+
+    def r(sec, need):
+        return DataRequest(section_id=sec, section_title=sec, need=need, reason="스토리보드가 요구하지만 KB에 없음")
+
+    out = merge_requests([
+        r("Ⅰ.1", "RFP의 사업 추진배경·목적 원문"),                 # RFP에 있는 내용은 뺀다
+        r("Ⅳ.1", "SFR 99건 전체 목록과 세부 내용"),
+        r("Ⅲ.3", "PMR-005·006 투입인력 요건 원문"),
+        r("Ⅰ.3", "품질·보안 관련 공인 인증 보유 현황 [확인 필요]"),
+        r("Ⅴ.2", "품질 관련 공인 인증 보유 여부와 인증서"),       # 같은 분류의 비슷한 요청은 묶는다
+        r("Ⅲ.3", "외화증권 업무 수행 경험이 있는 투입 인력"),      # 인력(실적보다 먼저 맞춘다)
+        r("Ⅱ.4", "클라우드 전환 수행 실적"),
+        r("Ⅲ.1", "현행 시스템 구성도와 업무 처리 규모"),          # 발주기관에 확인할 것
+        r("Ⅲ.2", "사업기간과 오픈 목표일"),
+    ])
+    got = [(m.category, m.need, m.sections) for m in out]
+    assert got == [
+        ("실적", "클라우드 전환 수행 실적", ["Ⅱ.4"]),
+        ("인력", "외화증권 업무 수행 경험이 있는 투입 인력", ["Ⅲ.3"]),
+        ("인증", "품질·보안 관련 공인 인증 보유 현황", ["Ⅰ.3", "Ⅴ.2"]),
+        ("발주기관 확인", "현행 시스템 구성도와 업무 처리 규모", ["Ⅲ.1"]),
+        ("발주기관 확인", "사업기간과 오픈 목표일", ["Ⅲ.2"]),
+    ]
+    assert out[2].section_title == "Ⅰ.3, Ⅴ.2" and "절 2곳" in out[2].reason
+    assert "발주기관 질의" in out[3].reason

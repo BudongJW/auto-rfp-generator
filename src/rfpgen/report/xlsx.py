@@ -135,8 +135,8 @@ def write_trace_workbook(path: Path, outline: Outline, trace: Trace, data_reques
         for r in trace.rows
     ], [16, 32, 16, 20, 40, 10, 10, 22, 28, 36, 10])
     if data_requests is not None:
-        _sheet(wb, "자료 요청서", ["절", "필요한 근거", "사유", "담당자", "기한"], [
-            [d.section_title, d.need, d.reason, d.owner, d.due] for d in data_requests
-        ], [30, 50, 30, 12, 12])
+        _sheet(wb, "자료 요청서", ["분류", "필요한 근거", "요청한 절", "사유", "담당자", "기한"], [
+            [getattr(d, "category", ""), d.need, d.section_title, d.reason, d.owner, d.due] for d in data_requests
+        ], [10, 50, 36, 30, 12, 12])
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)

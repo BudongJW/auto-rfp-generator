@@ -35,6 +35,8 @@ class DataRequest(BaseModel):
     reason: str = ""
     owner: str = ""
     due: str = ""
+    category: str = ""                                   # 실적·인력·인증·재무·회사·기술·기타
+    sections: list[str] = Field(default_factory=list)     # 같은 근거를 요구한 절들(묶은 경우)
 
 
 class Storyboard(BaseModel):

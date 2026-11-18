@@ -139,7 +139,50 @@ def data_requests(sb: Storyboard, kb: CompanyKB) -> list[DataRequest]:
                 continue
             out.append(DataRequest(section_id=plan.section_id, section_title=f"{plan.number} {plan.title}", need=need,
                                    reason="스토리보드가 요구하지만 KB에 없음"))
-    return out
+    return merge_requests(out)
+
+
+# RFP에 있는 내용(원문·요구사항 목록·규격)은 회사에 요청할 자료가 아니다: 생성기가 RFP를 갖고 있다
+_RFP_NEED = re.compile(r"RFP|원문|제안\s*요청서|과업\s*지시서|[A-Z]{3}-\d{2,4}|\b[A-Z]{3}\s*\d+\s*건")
+# 분류는 위에서부터 맞춘다('투입 인력의 수행 경험'은 인력). '발주기관 확인'은 회사 자료가 아니라 질의·설명회로 확인할 것
+_CATEGORIES = [
+    ("발주기관 확인", re.compile(r"발주\s*기관|현행|대상\s*(기관|인원|산출물)|연계\s*대상|제공\s*자원|오픈\s*(목표\s*)?일|범위\s*구분|제외\s*범위|로드맵"
+                              r"|보안\s*지침|개발\s*표준|설명회|인계")),
+    ("인력", re.compile(r"인력|PM|PL|전문가|경력|투입|이력")),
+    ("실적", re.compile(r"실적|수행\s*경험|사례|레퍼런스|유사\s*사업")),
+    ("인증", re.compile(r"인증|GS|CC|ISMS|ISO|CMMI|특허")),
+    ("재무", re.compile(r"매출|자본금|신용|재무")),
+    ("회사", re.compile(r"설립|연혁|조직도|일반\s*현황|공동\s*수급|지분|중소기업|하도급")),
+    ("기술", re.compile(r"방법론|도구|솔루션|제품|규격|프레임워크|아키텍처|플랫폼")),
+]
+_CATEGORY_ORDER = ["실적", "인력", "인증", "재무", "회사", "기술", "기타", "발주기관 확인"]
+
+
+def _category(need: str) -> str:
+    return next((c for c, pat in _CATEGORIES if pat.search(need)), "기타")
+
+
+def merge_requests(requests: list[DataRequest], threshold: float = 0.35) -> list[DataRequest]:
+    """자료 요청을 정리한다: RFP에 있는 내용은 빼고, 같은 분류에서 비슷한 요청(문자 2-gram 유사도)을 한 줄로 묶어
+    요청한 절을 함께 적는다. 분류 순서, 같은 분류 안에서는 여러 절이 요청한 것부터."""
+    merged: list[DataRequest] = []
+    for r in requests:
+        need = re.sub(r"\s*\[확인 필요[^\]]*\]\s*", " ", r.need).strip()
+        if not need or _RFP_NEED.search(need):
+            continue
+        cat = _category(need)
+        hit = next((m for m in merged if m.category == cat and similarity(m.need, need) >= threshold), None)
+        if hit is None:
+            merged.append(r.model_copy(update={"need": need, "category": cat, "sections": [r.section_title]}))
+        elif r.section_title not in hit.sections:
+            hit.sections.append(r.section_title)
+    for m in merged:
+        m.section_title = ", ".join(m.sections)
+        if m.category == "발주기관 확인":
+            m.reason = "회사 자료가 아님 — 발주기관 질의·제안요청 설명회로 확인"
+        if len(m.sections) > 1:
+            m.reason += f"(절 {len(m.sections)}곳)"
+    return sorted(merged, key=lambda m: (_CATEGORY_ORDER.index(m.category), -len(m.sections)))
 
 
 # ---- 절 초안 ---------------------------------------------------------------------------------

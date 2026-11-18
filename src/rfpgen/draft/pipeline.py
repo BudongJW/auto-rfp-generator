@@ -62,8 +62,13 @@ def storyboard_markdown(sb: Storyboard) -> str:
             lines.append("- 도식: " + ", ".join(p.figures) + " (스펙: `strategy/figures/`)")
         lines.append("")
     if sb.data_requests:
-        lines += ["## 자료 요청", ""]
-        lines += [f"- [{d.section_title}] {d.need}" for d in sb.data_requests]
+        lines += ["## 자료 요청", "", "KB에 없어 회사에서 받아야 할 근거입니다(같은 근거는 묶고, RFP에 있는 내용은 뺐습니다).", ""]
+        current = None
+        for d in sb.data_requests:
+            if d.category != current:
+                current = d.category
+                lines += ([""] if lines[-1] else []) + [f"### {current or '기타'}", ""]
+            lines.append(f"- {d.need} — {d.section_title}")
         lines.append("")
     return "\n".join(lines)
 
