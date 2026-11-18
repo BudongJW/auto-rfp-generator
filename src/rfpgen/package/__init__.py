@@ -18,7 +18,16 @@ from ..check import report_markdown
 from ..kb import load_kb
 from ..profile import Profile
 from ..render.hwpx_writer import load_style
-from ..render.pdf import RenderError, clean_pdf, converters_available, hwpx_to_pdf, inspect_pdf, pptx_to_pdf
+from ..render.pdf import (
+    Bookmark,
+    RenderError,
+    clean_pdf,
+    converters_available,
+    find_heading_pages,
+    hwpx_to_pdf,
+    inspect_pdf,
+    pptx_to_pdf,
+)
 from ..render.slides import build_specs, render_deck, script_markdown
 from ..schemas.draft import CheckFinding, CheckReport, SectionDraft, Storyboard
 from ..schemas.kb import CompanyKB
@@ -138,7 +147,8 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
             _f(rep, "SUB-002", "blocker", f"{doc_type} PDF를 만들지 못했습니다 — {exc}", basis="제출 형식")
             continue
         dst = sub / f"{i:02d}_{doc_type}.pdf"   # 파일 이름에 회사명을 넣지 않는다
-        info = clean_pdf(raw, dst, title=f"{title} {doc_type}")
+        marks = _proposal_bookmarks(project, raw) if src.suffix == ".hwpx" else None
+        info = clean_pdf(raw, dst, title=f"{title} {doc_type}", bookmarks=marks)
         docs.append(PackagedDoc(doc_type, src, dst, info.pages, info.size_bytes, info.fonts))
     del avail
     form_docs = _package_forms(project, sub, raw_pdf, title, rep, notes)
@@ -244,6 +254,21 @@ def build_package(project: Path, profile: Profile, *, kb_dir: Path | None = None
     return PackageResult(docs=docs, check=rep, checklist=checklist, notes=notes)
 
 
+def _proposal_bookmarks(project: Path, pdf: Path) -> list[Bookmark]:
+    """본문 PDF의 장·절 책갈피. 목차(plan/outline.json)의 장·절 제목을 렌더된 쪽에서 찾는다."""
+    from ..render.hwpx_writer import _section_number
+
+    path = project / "plan" / "outline.json"
+    if not path.exists():
+        return []
+    outline = Outline.model_validate_json(path.read_text(encoding="utf-8"))
+    heads: list[tuple[str, int]] = []
+    for ch in outline.chapters:
+        heads.append((f"{ch.number} {ch.title}", 0))
+        heads += [(f"{_section_number(n)} {n.title}", 1) for n in ch.children]
+    return find_heading_pages(pdf, heads)
+
+
 _FORM_FILES = {"정성제안서": "01-1_정성제안서_별지.pdf", "정량제안서": "04_정량제안서.pdf",
                "하도급계획서": "05_하도급계획서.pdf", "기타문서": "06_기타문서.pdf"}
 
@@ -258,7 +283,7 @@ def _package_forms(project: Path, sub: Path, raw_pdf: Path, title: str, rep: Che
     report = load_forms_report(project)
     if report is None or not report.forms:
         return []
-    groups: dict[str, list[Path]] = {}
+    groups: dict[str, list[tuple[Path, str]]] = {}
     for f in report.forms:
         src = project / f.output
         if not f.output or not src.exists():
@@ -270,20 +295,22 @@ def _package_forms(project: Path, sub: Path, raw_pdf: Path, title: str, rep: Che
             notes.append(f"{f.form_no}: {exc}")
             _f(rep, "SUB-002", "major", f"{f.form_no}({f.title}) PDF를 만들지 못했습니다 — {exc}", basis="제출 형식")
             continue
-        groups.setdefault(f.doc_type, []).append(pdf)
+        groups.setdefault(f.doc_type, []).append((pdf, f"{f.form_no} {f.title}".strip()))
     out: list[PackagedDoc] = []
     for doc_type, name in _FORM_FILES.items():
         parts = groups.get(doc_type)
         if not parts:
             continue
         merged = raw_pdf / "forms" / f"_{doc_type}.pdf"
+        marks: list[Bookmark] = []
         with pikepdf.Pdf.new() as pdf:
-            for part in parts:
+            for part, label in parts:
+                marks.append(Bookmark(title=label, page=len(pdf.pages)))     # 서식마다 책갈피
                 with pikepdf.Pdf.open(part) as src_pdf:
                     pdf.pages.extend(src_pdf.pages)
             pdf.save(merged)
         dst = sub / name
-        info = clean_pdf(merged, dst, title=f"{title} {doc_type}")
+        info = clean_pdf(merged, dst, title=f"{title} {doc_type}", bookmarks=marks)
         out.append(PackagedDoc(doc_type, project / "out" / "forms", dst, info.pages, info.size_bytes, info.fonts))
     return out
 

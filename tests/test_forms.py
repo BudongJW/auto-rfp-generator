@@ -315,6 +315,10 @@ def test_package_includes_forms(forms_project, tmp_path):
     assert {"04_정량제안서.pdf", "05_하도급계획서.pdf", "06_기타문서.pdf"} <= set(names)
     quant = next(d for d in res.docs if d.pdf.name == "04_정량제안서.pdf")
     assert quant.pages == 2                                             # 4호·7호 서식 묶음
+    from rfpgen.render.pdf import read_bookmarks
+
+    marks = read_bookmarks(quant.pdf)                                   # 서식마다 책갈피
+    assert [(lv, page) for lv, _, page in marks] == [(0, 0), (0, 1)] and marks[0][1].startswith("별지 제4호")
     assert set(inspect_pdf(quant.pdf).metadata) == {"/Title"}
     assert res.check.stats.get("main_pages") is not None               # 쪽수 점검은 본문만 센다
     rules = {f.rule for f in res.check.findings}

@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -177,8 +178,70 @@ def inspect_pdf(path: Path) -> PdfInfo:
         return PdfInfo(path=path, pages=len(pdf.pages), size_bytes=path.stat().st_size, fonts=fonts, metadata=meta)
 
 
-def clean_pdf(src: Path, dst: Path, *, title: str = "") -> PdfInfo:
-    """작성자·제작 도구·XMP를 지우고 제목만 남긴다(블라인드 평가에서 파일 정보 노출 방지, BLD-003)."""
+@dataclass
+class Bookmark:
+    """PDF 책갈피(목차). page는 0부터, level 0이 장."""
+
+    title: str
+    page: int
+    level: int = 0
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[\s·ㆍ]+", "", text)
+
+
+def find_heading_pages(pdf: Path, headings: list[tuple[str, int]]) -> list[Bookmark]:
+    """(제목, 단계) 목록을 PDF에서 차례로 찾아 책갈피로 만든다. 제목은 줄 머리에 있어야 하고(본문 속 언급은 건너뜀),
+    앞 제목을 찾은 쪽부터 뒤로만 찾는다. 못 찾은 제목은 뺀다."""
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf))
+    try:
+        pages = []
+        for i in range(len(doc)):
+            tp = doc[i].get_textpage()
+            pages.append([_norm(line) for line in tp.get_text_range().splitlines() if line.strip()])
+            tp.close()
+    finally:
+        doc.close()
+    out: list[Bookmark] = []
+    start = 0
+    for title, level in headings:
+        key = _norm(title)
+        if not key:
+            continue
+        # 줄 전체가 제목인 쪽을 먼저 찾고, 없으면(긴 제목이 줄바꿈된 경우) 줄 머리로 찾는다
+        hit = next((i for i in range(start, len(pages)) if key in pages[i]), None)
+        if hit is None:
+            hit = next((i for i in range(start, len(pages)) if any(ln.startswith(key) for ln in pages[i])), None)
+        if hit is not None:
+            out.append(Bookmark(title=" ".join(title.split()), page=hit, level=level))
+            start = hit
+    return out
+
+
+def _set_outline(pdf, bookmarks: list[Bookmark]) -> None:
+    import pikepdf
+
+    with pdf.open_outline() as outline:
+        outline.root.clear()
+        stack: list[tuple[int, pikepdf.OutlineItem]] = []
+        for b in bookmarks:
+            if not 0 <= b.page < len(pdf.pages):
+                continue
+            item = pikepdf.OutlineItem(b.title, b.page)
+            while stack and stack[-1][0] >= b.level:
+                stack.pop()
+            (stack[-1][1].children if stack else outline.root).append(item)
+            stack.append((b.level, item))
+    if bookmarks:
+        pdf.Root.PageMode = pikepdf.Name.UseOutlines        # 열면 책갈피 창이 보이게
+
+
+def clean_pdf(src: Path, dst: Path, *, title: str = "", bookmarks: list[Bookmark] | None = None) -> PdfInfo:
+    """작성자·제작 도구·XMP를 지우고 제목만 남긴다(블라인드 평가에서 파일 정보 노출 방지, BLD-003).
+    bookmarks를 주면 책갈피(장·절, 서식별)를 넣는다."""
     import pikepdf
 
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -189,10 +252,29 @@ def clean_pdf(src: Path, dst: Path, *, title: str = "") -> PdfInfo:
             pdf.docinfo["/Title"] = title
         if "/Metadata" in pdf.Root:
             del pdf.Root.Metadata
+        if bookmarks:
+            _set_outline(pdf, bookmarks)
         pdf.save(dst, compress_streams=True, object_stream_mode=pikepdf.ObjectStreamMode.generate)
     return inspect_pdf(dst)
 
 
-__all__ = ["PdfInfo", "RenderError", "clean_pdf", "converters_available", "hwpx_to_pdf", "inspect_pdf", "pptx_to_pdf",
-           "svgs_to_png",
-           "sidecar_dir"]
+def read_bookmarks(path: Path) -> list[tuple[int, str, int]]:
+    """(단계, 제목, 쪽 0부터) — 점검·테스트용."""
+    import pikepdf
+
+    out: list[tuple[int, str, int]] = []
+    with pikepdf.open(path) as pdf:
+        pages = {p.objgen: i for i, p in enumerate(pdf.pages)}
+        with pdf.open_outline() as outline:
+            def walk(items, level):
+                for it in items:
+                    dest = it.destination
+                    page = pages.get(dest[0].objgen, -1) if dest is not None and len(dest) else -1
+                    out.append((level, str(it.title), page))
+                    walk(it.children, level + 1)
+            walk(outline.root, 0)
+    return out
+
+
+__all__ = ["Bookmark", "PdfInfo", "RenderError", "clean_pdf", "converters_available", "find_heading_pages", "hwpx_to_pdf",
+           "inspect_pdf", "pptx_to_pdf", "read_bookmarks", "sidecar_dir", "svgs_to_png"]

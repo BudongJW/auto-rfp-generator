@@ -100,6 +100,30 @@ def test_slide_head_fits_box():
     assert pt == 10 and text.endswith("…") and len(text) < len(long * 3)
 
 
+def test_heading_bookmarks_prefer_whole_line(tmp_path):
+    """본문 속 '1. Background details' 줄보다 제목 줄 '1. Background'를 고르고, 단계별로 책갈피를 넣는다."""
+    pytest.importorskip("reportlab")
+    from reportlab.pdfgen import canvas
+
+    from rfpgen.render.pdf import find_heading_pages, read_bookmarks
+
+    src = tmp_path / "doc.pdf"
+    c = canvas.Canvas(str(src))
+    for lines in (["Cover"], ["I. Overview", "1. Background details are in the next page"], ["1. Background", "body"],
+                  ["II. Plan", "1. Schedule"]):
+        for k, line in enumerate(lines):
+            c.drawString(72, 760 - 20 * k, line)
+        c.showPage()
+    c.save()
+    marks = find_heading_pages(src, [("I. Overview", 0), ("1. Background", 1), ("II. Plan", 0), ("1. Schedule", 1),
+                                     ("III. Missing", 0)])
+    assert [(m.title, m.page, m.level) for m in marks] == [("I. Overview", 1, 0), ("1. Background", 2, 1),
+                                                           ("II. Plan", 3, 0), ("1. Schedule", 3, 1)]
+    clean_pdf(src, tmp_path / "out.pdf", title="t", bookmarks=marks)
+    assert read_bookmarks(tmp_path / "out.pdf") == [(0, "I. Overview", 1), (1, "1. Background", 2), (0, "II. Plan", 3),
+                                                     (1, "1. Schedule", 3)]
+
+
 def test_clean_pdf_strips_metadata(tmp_path):
     pytest.importorskip("reportlab")
     from reportlab.pdfgen import canvas
@@ -158,6 +182,13 @@ def test_package_end_to_end_and_checks(drafted):
         assert info.pages == d.pages > 0
         assert set(info.metadata) == {"/Title"}                      # 작성자·제작 도구 없음
         assert not info.unembedded_fonts
+    from rfpgen.render.pdf import read_bookmarks
+
+    marks = read_bookmarks(res.docs[0].pdf)                             # 본문: 장·절 책갈피, 쪽 순서
+    chapters = [t for lv, t, _ in marks if lv == 0]
+    assert chapters[:2] == ["Ⅰ. 제안 개요", "Ⅱ. 제안업체 일반"] and any(lv == 1 for lv, _, _ in marks)
+    pages = [pg for _, _, pg in marks]
+    assert pages == sorted(pages) and pages[0] >= 1                     # 표지 다음부터
     manifest = json.loads((project / "submission" / "manifest.json").read_text(encoding="utf-8"))
     assert [m["doc_type"] for m in manifest] == ["정성제안서", "제안요약서", "발표자료"]
     rules = {f.rule for f in res.check.findings}
