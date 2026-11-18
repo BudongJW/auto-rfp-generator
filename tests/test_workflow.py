@@ -104,3 +104,17 @@ def test_cli_sample_start_status(tmp_path, monkeypatch):
     assert "npm ci" in r.output
     r = CliRunner().invoke(app, ["--help"])
     assert "시작하기" in r.output and "단계별 작업" in r.output
+
+
+def test_cli_survives_non_utf8_output(tmp_path):
+    """Windows에서 출력을 파일로 돌리면 cp949·cp1252로 쓰게 되어 한글·기호에서 멈추던 문제."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src"
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONPATH": str(src)}
+    r = subprocess.run([sys.executable, "-m", "rfpgen", "sample", "예제.hwpx"], cwd=tmp_path, env=env,
+                       capture_output=True, timeout=120)
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")[-500:]
+    assert "만들었습니다" in r.stdout.decode("utf-8") and (tmp_path / "예제.hwpx").exists()

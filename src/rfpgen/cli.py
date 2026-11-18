@@ -21,6 +21,25 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, help=(
 START, STEPS, TOOLS = "시작하기", "단계별 작업", "도구"
 
 
+def _utf8_output() -> None:
+    """출력을 파일·파이프로 보낼 때 Windows 기본 인코딩(cp949·cp1252)은 '✓' 같은 기호를 못 써서 멈춘다.
+    UTF-8이 아니면 UTF-8로 바꾼다(콘솔 창에 바로 쓸 때는 Python이 이미 UTF-8로 쓴다)."""
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if enc not in ("utf8", "utf8sig") and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
+@app.callback()
+def _main() -> None:
+    _utf8_output()
+
+
 @app.command("setup", rich_help_panel=START)
 def setup_cmd(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="실행할 명령만 보여 줌")] = False,

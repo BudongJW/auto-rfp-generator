@@ -27,6 +27,36 @@ jobs:
       # 변환기(Node 사이드카·LibreOffice)가 없으면 렌더 테스트는 건너뛰고 나머지를 본다
       - run: uv run pytest -q
 
+  os:
+    # Windows·macOS: 변환기 없이(렌더 테스트는 건너뜀) 테스트와 처음 쓰는 흐름(setup 안내 → sample → start)을 본다
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+      - name: 처음 쓰는 흐름(변환기 없음)
+        run: |
+          mkdir smoke && cd smoke
+          uv run --project .. rfpgen setup --dry-run --no-browser || true
+          uv run --project .. rfpgen doctor || true
+          uv run --project .. rfpgen sample
+          uv run --project .. rfpgen start 예제_제안요청서.hwpx --date 2026-12-01 > start.log
+          cat start.log
+          test -f projects/예제_제안요청서/out/proposal.hwpx
+          test -f projects/예제_제안요청서/out/forms/forms.json
+          uv run --project .. rfpgen status projects/예제_제안요청서
+
   render:
     name: render (PDF·도식·장표 포함)
     runs-on: ubuntu-24.04
