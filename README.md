@@ -179,7 +179,7 @@ uv run rfpgen status projects/제안요청서
 
 ![rfpgen status 실행 화면](docs/images/terminal-status.png)
 
-<sub>예제에서 두 절을 Claude로 다시 쓴 뒤의 상태입니다. LLM도 근거(KB 값)가 없으면 수치를 지어내지 않고 `[확인 필요]`로 남기므로, 채울 자리가 늘어날 수 있습니다.</sub>
+<sub>예제에서 두 절을 Claude로 다시 쓴 뒤의 상태입니다. LLM도 근거(KB 값)가 없으면 수치를 지어내지 않고 `[확인 필요]`로 남기므로, 채울 자리가 늘어날 수 있습니다. 예제의 공고 일정은 `rfpgen sample`을 실행한 날을 기준으로 잡힙니다.</sub>
 
 주로 이 순서로 손봅니다.
 

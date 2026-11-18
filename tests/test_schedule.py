@@ -102,11 +102,13 @@ def test_sample_schedule_flows_to_outputs(tmp_path):
 
     stages, todo = project_status(project, today=DAY)
     sched = next(s for s in stages if s.key == "schedule")
-    assert sched.done and "D-12" in sched.detail
+    assert sched.done and sched.detail == "설명회 11-23 D-5 · 질의 마감 11-24 D-6 · 제출 마감 11-30 D-12"
     assert any(t.startswith("질의 마감 D-6") and "questions.md" in t for t in todo)
     assert "rfpgen kb init" in todo[0]                                     # 급하지 않으면 원래 첫 할 일
     _, late = project_status(project, today=dt.date(2026, 11, 28))
     assert late[0].startswith("제출 마감 D-2") and not any(t.startswith("질의 마감") for t in late)
+    after, _ = project_status(project, today=dt.date(2026, 12, 10))
+    assert next(s for s in after if s.key == "schedule").detail == "제출 마감 11-30 10일 지남"
 
 
 def test_checklist_shows_deadline():

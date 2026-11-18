@@ -102,10 +102,15 @@ def _schedule_status(rfp: dict, project: Path, today: dt.date, package_done: boo
     if not items:
         return Stage("schedule", "공고 일정", False, "찾지 못함 — 입찰공고문을 함께 넣으면 제출 마감·질의 기간을 읽습니다",
                      "rfpgen analyze <RFP 파일> <입찰공고문>"), todo
-    shown = [x for x in items if x.kind in ("질의", "설명회", "제안서 제출", "입찰 마감", "제안서 평가")]
-    parts = [f"{x.kind} {when(x.due)} {d_day(x.due, today)}" for x in (shown or items)
-             if not (dl is not None and x.kind == "입찰 마감" and dl.kind == "제안서 제출" and x.due == dl.due)]
-    return Stage("schedule", "공고 일정", True, " · ".join(parts[:4]), "out/analysis.md의 '일정'"), todo
+    short = {"질의": "질의 마감", "제안서 제출": "제출 마감", "제안서 평가": "평가", "참가 등록": "참가 등록"}
+    shown = [x for x in items if x.kind in ("질의", "설명회", "제안서 제출", "입찰 마감", "제안서 평가")
+             and not (dl is not None and x.kind == "입찰 마감" and dl.kind == "제안서 제출" and x.due == dl.due)]
+    # 한 줄에 들어가게 앞으로 올 일정 셋까지, 월-일과 남은 날만(연도·시각은 할 일과 analysis.md에)
+    ahead = [x for x in shown or items if (x.due or "")[:10] >= today.isoformat()]
+    if not ahead and dl is not None:
+        ahead = [dl]                                       # 다 지났으면 제출 마감이 지났음을 보인다
+    parts = [f"{short.get(x.kind, x.kind)} {(x.due or '')[5:10]} {d_day(x.due, today)}" for x in ahead[:3]]
+    return Stage("schedule", "공고 일정", True, " · ".join(parts) or "모두 지남", "out/analysis.md의 '일정'"), todo
 
 
 def project_status(project: Path, today: dt.date | None = None) -> tuple[list[Stage], list[str]]:
