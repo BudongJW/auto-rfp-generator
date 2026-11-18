@@ -187,3 +187,73 @@ def test_share_kb_respects_provider_policy(project, kb_dir, profile):
     sent = " ".join(c.system + c.context + c.instruction for c in fake.calls)
     assert "123-45-67890" not in sent and "02-123-4567" not in sent      # 별지용 회사 기본정보는 보내지 않는다
     assert fake.calls[0].data_class == "internal"
+
+
+# ---- RFP 개요 발췌(개요 절 맥락) ----------------------------------------------------------------
+
+
+def _doc(blocks, role="제안요청서"):
+    from rfpgen.schemas.docir import Document
+
+    return Document(doc_id="d01", filename="rfp.pdf", format="pdf", sha256="0", role=role, blocks=blocks)
+
+
+def test_overview_excerpt_picks_overview_chapters():
+    from rfpgen.draft.context import overview_excerpt
+    from rfpgen.schemas.docir import Block, TableInfo, TableRef
+
+    def cell(i, row, col, text):
+        return Block(id=f"c{i}", kind="cell", text=text, cell=TableRef(table_id="t1", row=row, col=col))
+
+    blocks = [
+        Block(id="b0", kind="heading", level=1, text="Ⅵ. 제안서 작성 안내사항 ··········· 351"),   # 목차 줄
+        Block(id="b1", kind="heading", level=1, text="Ⅰ. 사업개요"),
+        Block(id="b2", kind="para", text="\U000f02b1 추진배경"),
+        Block(id="b3", kind="para", text="ㅇ 노후화된 업무시스템 재구축 필요"),
+        Block(id="t1", kind="table", table=TableInfo(rows=2, cols=2)),
+        cell(1, 0, 0, "구분"), cell(2, 0, 1, "내용"), cell(3, 1, 0, "사업기간"), cell(4, 1, 1, "16개월"),
+        Block(id="b4", kind="heading", level=1, text="Ⅱ. 현황"),
+        Block(id="b5", kind="para", text="ㅇ 임직원 708명"),
+        Block(id="b6", kind="heading", level=1, text="Ⅴ. 제안 요청 사항"),
+        Block(id="b7", kind="para", text="SFR-001 거래 처리 기능"),
+    ]
+    out = overview_excerpt([_doc(blocks)])
+    assert out.startswith("<rfp_overview>") and "[Ⅰ. 사업개요]" in out and "[Ⅱ. 현황]" in out
+    assert "사업기간 | 16개월" in out and "추진배경" in out and "\U000f02b1" not in out
+    assert "SFR-001" not in out and "351" not in out                  # 요구사항 장·목차 줄은 넣지 않는다
+
+    # 제목 판별이 없는 문서: 'Ⅰ. …' 꼴의 짧은 문단을 장으로 본다
+    flat = [Block(id=f"p{i}", kind="para", text=t) for i, t in
+            enumerate(["Ⅰ. 사업 개요", "○ 민원 서비스 편의성 향상이 목적", "Ⅱ. 제안 요청 내용", "○ 요구사항 문장"])]
+    out = overview_excerpt([_doc(flat)])
+    assert "편의성 향상이 목적" in out and "요구사항 문장" not in out
+    assert overview_excerpt([_doc(flat, role="별지서식")]) == ""          # 별지 서식은 보지 않는다
+
+
+def test_llm_context_carries_rfp_overview_and_requirement_list(tmp_path, profile):
+    from rfpgen.sample import build_sample_rfp
+
+    src = build_sample_rfp(tmp_path / "예제.hwpx", with_forms=False)
+    project = tmp_path / "proj"
+    analyze([src], project, profile)
+    fake = WriterFake()
+    run_draft(project, profile, provider=fake)
+    ctx = next(c for c in fake.calls if c.task == "draft.section").context
+    assert "발주기관: 가상시 민원봉사과" in ctx and "사업예산: 1,250,000,000원" in ctx
+    assert "요구사항 목록(ID 이름):" in ctx and "SFR-002 민원 처리 현황 조회" in ctx and "PMR-001 사업 관리" in ctx
+    assert "<rfp_overview>" in ctx and "첨부파일 용량 제한(10MB)" in ctx
+    assert all(c.data_class == "public" for c in fake.calls)
+
+
+def test_fact_check_accepts_rfp_values_and_counts(project):
+    """RFP에 있는 값(사업명의 연도·예산)과 RFP에서 바로 셀 수 있는 값(요구사항 건수·배점·사업기간 안의 개월)은 근거로 본다."""
+    from rfpgen.check import rfp_number_sources, supported
+    from rfpgen.schemas.rfp import Rfp
+
+    rfp = Rfp.model_validate_json(sorted(project.glob("rfp/rfp.v*.json"))[-1].read_text(encoding="utf-8"))
+    src = rfp_number_sources(rfp)
+    for ok in ["2026년", "5건", "2건", "8개월", "3개월", "1,250,000,000원", "12.5억", "15점"]:
+        assert supported(ok, src), ok
+    for bad in ["9개월", "6개", "35개", "99%", "25건"]:
+        assert not supported(bad, src), bad
+    assert numbers("착수 1~2개월, 6개 단계") == ["2개월", "6개"]          # '2개월'을 '2개'로 읽지 않는다

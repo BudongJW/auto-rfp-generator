@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from ..schemas.docir import Block, Document
 from ..schemas.draft import Storyboard
 from ..schemas.kb import CompanyKB
 from ..schemas.plan import Outline, OutlineNode, PageBudget, Trace
@@ -24,6 +27,7 @@ class DraftInputs:
     title: str
     blind: bool
     storyboard: Storyboard | None = None
+    overview: str = ""                                  # RFP 사업 개요·배경·현황 발췌(overview_excerpt)
     requirement_index: dict[str, Requirement] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -47,11 +51,117 @@ def chapter_of(outline: Outline, node_id: str) -> OutlineNode | None:
     return None
 
 
+# ---- RFP 사업 개요 발췌 ------------------------------------------------------------------------
+# 개요 절(사업 이해도·제안 배경·추진 전략)은 연결 요구사항이 없어, 이 발췌가 없으면 LLM이 RFP에 있는 내용까지
+# [확인 필요]로 남긴다(2026-11-18 예제 실측: 사업 이해도 23곳).
+
+OVERVIEW_TITLE = re.compile(r"사업\s*개요|추진\s*(배경|목적|경과|방안|방향|전략|범위)|사업\s*(배경|목적|범위|내용)|필요성"
+                            r"|현\s*황|기대\s*효과")
+NOT_OVERVIEW = re.compile(r"요구\s*사항|제안\s*(요청|서|안내)|작성|평가|서식|구매|입찰|계약|자격|제출")
+CHAPTER_NUM = re.compile(r"^\s*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]|[IVX]{1,4}|제\s*\d{1,2}\s*장)\s*[.)]?\s*\S")
+TOC_LEADER = re.compile(r"[·.…]{4,}|\s\d{1,3}\s*$")
+PRIVATE_USE = re.compile(r"[\ue000-\uf8ff\U000f0000-\U0010ffff]")
+
+
+def _chapters(doc: Document) -> list[int]:
+    """장(가장 높은 단계 제목) 블록의 위치. 제목 판별이 없으면 'Ⅰ. …' 꼴의 짧은 문단을 장으로 본다."""
+    heads = [(i, b) for i, b in enumerate(doc.blocks) if b.kind == "heading" and not TOC_LEADER.search(b.text)]
+    numbered = [(i, b) for i, b in heads if CHAPTER_NUM.match(b.text)]
+    if numbered:
+        top = min((b.level or 1) for _, b in numbered)
+        return [i for i, b in numbered if (b.level or 1) == top]
+    return [i for i, b in enumerate(doc.blocks)
+            if b.kind == "para" and len(b.text) < 40 and CHAPTER_NUM.match(b.text) and not TOC_LEADER.search(b.text)]
+
+
+def _render(blocks: list[Block]) -> list[str]:
+    """문단은 그대로, 표 칸은 행마다 ' | '로 이어 한 줄로."""
+    lines: list[str] = []
+    row_key, row = None, []
+    for b in blocks:
+        if b.kind == "cell" and b.cell is not None:
+            key = (b.cell.table_id, b.cell.row)
+            if key != row_key and row:
+                lines.append(" | ".join(row))
+                row = []
+            row_key = key
+            text = " ".join(b.text.split())
+            if text:
+                row.append(text)
+            continue
+        if row:
+            lines.append(" | ".join(row))
+            row, row_key = [], None
+        if b.kind in ("heading", "para"):
+            lines.append(" ".join(b.text.split()))
+    if row:
+        lines.append(" | ".join(row))
+    return lines
+
+
+def overview_excerpt(docs: list[Document], *, per_part: int = 3000, total: int = 9000) -> str:
+    """제안요청서의 사업 개요·추진 배경·목적·현황·추진 방향 장을 발췌한다(공개 RFP 원문이므로 LLM에 보내도 된다)."""
+    parts: list[str] = []
+    used = 0
+    for doc in docs:
+        if doc.role in ("별지서식", "평가기준"):
+            continue
+        idx = _chapters(doc)
+        for k, start in enumerate(idx):
+            title = " ".join(doc.blocks[start].text.split())
+            if not OVERVIEW_TITLE.search(title) or NOT_OVERVIEW.search(title):
+                continue
+            end = idx[k + 1] if k + 1 < len(idx) else len(doc.blocks)
+            seen: set[str] = set()
+            body: list[str] = []
+            size = 0
+            for line in _render(doc.blocks[start + 1:end]):
+                line = PRIVATE_USE.sub("", line).strip()
+                if not line or line in seen:
+                    continue
+                seen.add(line)
+                body.append(line)
+                size += len(line) + 1
+                if size >= per_part:
+                    body.append("…(이하 생략)")
+                    break
+            if body:
+                part = f"[{title}]\n" + "\n".join(body)
+                parts.append(part)
+                used += len(part)
+            if used >= total:
+                break
+        if used >= total:
+            break
+    if not parts:
+        return ""
+    return "<rfp_overview>\n" + "\n\n".join(parts) + "\n</rfp_overview>"
+
+
+def load_overview(project: Path) -> str:
+    docs = []
+    for f in sorted((Path(project) / "docir").glob("*.json")):
+        try:
+            docs.append(Document.model_validate_json(f.read_text(encoding="utf-8")))
+        except ValueError:
+            continue
+    return overview_excerpt(docs)
+
+
+# ---- LLM 문맥 -----------------------------------------------------------------------------------
+
+
 def rfp_brief(inp: DraftInputs) -> str:
     rfp = inp.rfp
     lines = ["<rfp_brief>", f"사업명: {inp.title}"]
+    if rfp.notice.agency:
+        lines.append(f"발주기관: {rfp.notice.agency.value}")
+    if rfp.notice.budget_krw:
+        lines.append(f"사업예산: {rfp.notice.budget_krw.value:,}원")
     if rfp.notice.period:
         lines.append(f"사업기간: {rfp.notice.period.value}")
+    if rfp.notice.contract_method:
+        lines.append(f"계약방법: {rfp.notice.contract_method.value}")
     lines.append(f"블라인드 평가: {'예' if inp.blind else '아니오(그래도 회사명은 쓰지 않는다)'}")
     lines.append("평가표(정성):")
     for a in rfp.evaluation.areas:
@@ -70,10 +180,21 @@ def rfp_brief(inp: DraftInputs) -> str:
     by_prefix: dict[str, int] = {}
     for r in rfp.requirements:
         by_prefix[r.prefix or "?"] = by_prefix.get(r.prefix or "?", 0) + 1
-    lines.append("요구사항 수: " + ", ".join(f"{k} {v}건" for k, v in sorted(by_prefix.items())))
+    lines.append(f"요구사항 수: 총 {len(rfp.requirements)}건(" + ", ".join(f"{k} {v}건" for k, v in sorted(by_prefix.items()))
+                 + ")")
+    if rfp.requirements:
+        lines.append("요구사항 목록(ID 이름):")
+        groups: dict[str, list[str]] = {}
+        for r in rfp.requirements[:400]:
+            groups.setdefault(r.prefix or "?", []).append(f"{r.id} {r.name[:30]}")
+        lines += [f"- {k}: " + "; ".join(v) for k, v in groups.items()]
+        if len(rfp.requirements) > 400:
+            lines.append(f"- … 외 {len(rfp.requirements) - 400}건")
     if inp.storyboard and inp.storyboard.win_themes:
         lines.append("차별화 메시지(win theme): " + " / ".join(inp.storyboard.win_themes))
     lines.append("</rfp_brief>")
+    if inp.overview:
+        lines.append(inp.overview)
     return "\n".join(lines)
 
 

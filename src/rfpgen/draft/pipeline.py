@@ -19,7 +19,7 @@ from ..schemas.draft import CheckReport, SectionDraft, Storyboard
 from ..schemas.kb import CompanyKB
 from ..schemas.plan import Outline, PageBudget, Trace
 from ..schemas.rfp import Rfp
-from .context import DraftInputs
+from .context import DraftInputs, load_overview
 from .tokens import PLACEHOLDER, apply_tokens
 from .write import data_requests, llm_storyboard, skeleton_storyboard, write_sections
 
@@ -78,7 +78,8 @@ def run_draft(project: Path, profile: Profile, *, kb_dir: Path | None = None, pr
     kb = load_kb(kb_dir) if kb_dir else CompanyKB()
     title = rfp.notice.title.value if rfp.notice.title else project.name
     blind = bool(rfp.guideline.blind and rfp.guideline.blind.value)
-    inp = DraftInputs(rfp=rfp, outline=outline, budget=budget, trace=trace, kb=kb, title=title, blind=blind)
+    inp = DraftInputs(rfp=rfp, outline=outline, budget=budget, trace=trace, kb=kb, title=title, blind=blind,
+                      overview=load_overview(project))
     notes: list[str] = []
     gateway = LLMGateway(provider, audit_path=project / "audit" / "llm_calls.jsonl") if provider is not None else None
 
@@ -184,7 +185,7 @@ def _publish(project: Path, inp: DraftInputs, profile: Profile, drafts: list[Sec
 
     run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report = run_checks(rfp=rfp, outline=outline, budget=budget, trace=trace, drafts=drafts, kb=kb, profile=profile,
-                        blind=blind, hwpx_path=out_path, run_id=run_id, figures=figs)
+                        blind=blind, hwpx_path=out_path, run_id=run_id, figures=figs, source_text=inp.overview)
     check_dir = project / "checks"
     check_dir.mkdir(parents=True, exist_ok=True)
     (check_dir / f"{run_id}.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -215,7 +216,8 @@ def refresh_figures(project: Path, profile: Profile, *, kb_dir: Path | None = No
     kb = load_kb(kb_dir) if kb_dir else CompanyKB()
     title = rfp.notice.title.value if rfp.notice.title else project.name
     blind = bool(rfp.guideline.blind and rfp.guideline.blind.value)
-    inp = DraftInputs(rfp=rfp, outline=outline, budget=budget, trace=trace, kb=kb, title=title, blind=blind, storyboard=sb)
+    inp = DraftInputs(rfp=rfp, outline=outline, budget=budget, trace=trace, kb=kb, title=title, blind=blind, storyboard=sb,
+                      overview=load_overview(project))
     drafts = latest_drafts(project, outline)
     attach_figures(drafts, sb, BuildContext(rfp=rfp, kb=kb, title=title), project)
     for d in drafts:

@@ -8,6 +8,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+OVERVIEW_LINES = [
+    "Ⅰ. 사업 개요",
+    "1. 추진 배경",
+    "○ 현행 통합민원시스템은 2019년 구축 이후 7년간 운영되어 화면 구조가 노후화되고, 첨부파일 용량 제한(10MB)으로 "
+    "민원인이 서류를 나누어 내는 불편이 지속됨",
+    "○ 민원 신청의 모바일 비중이 늘었으나 모바일 화면이 최적화되어 있지 않아 신청 중도 포기가 발생함",
+    "2. 사업 목적",
+    "○ 민원 신청·조회 서비스를 개선하여 대국민 민원서비스 편의성 향상",
+    "○ 처리 단계 공개와 알림으로 민원 처리 업무 효율화",
+    "○ 개인정보 암호화와 응답 시간 개선으로 안전하고 안정적인 서비스 제공",
+    "3. 현황",
+    "○ 발주기관: 가상시 민원봉사과",
+    "○ 운영 환경: WEB/WAS 이중화, DBMS 1식, 민원 담당 공무원 약 120명 사용",
+    "○ 연계: 행정정보 공동이용 시스템, 문자·이메일 발송 서비스",
+]
+
 GUIDE_LINES = [
     "Ⅴ. 제안서 작성 안내",
     "1. 제안서 작성 지침",
@@ -143,6 +159,8 @@ def build_sample_rfp(path: Path, *, with_forms: bool = True) -> Path:
 
     doc = HwpxDocument.new()
     doc.add_paragraph("※ 이 문서는 rfpgen 체험용으로 만든 가상 제안요청서입니다(실제 기관·사업과 관계없음).")
+    for line in OVERVIEW_LINES:
+        doc.add_paragraph(line)
     doc.add_paragraph("Ⅳ. 제안 요청 내용")
     doc.add_paragraph("1. 요구사항 총괄표")
     add_table(doc, DECLARED_TABLE, {})
@@ -167,4 +185,4 @@ def build_sample_rfp(path: Path, *, with_forms: bool = True) -> Path:
 
 
 __all__ = ["DECLARED_TABLE", "DETAILS", "EVAL_QUAL", "EVAL_QUAL_SPANS", "EVAL_QUANT", "EVAL_QUANT_SPANS", "GUIDE_LINES",
-           "SUMMARY_SPANS", "SUMMARY_TABLE", "add_table", "build_sample_rfp", "detail_table"]
+           "OVERVIEW_LINES", "SUMMARY_SPANS", "SUMMARY_TABLE", "add_table", "build_sample_rfp", "detail_table"]

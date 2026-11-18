@@ -10,6 +10,7 @@ import re
 import zipfile
 from pathlib import Path
 
+from ..diagram.build import project_months
 from ..draft.tokens import PLACEHOLDER, numbers
 from ..profile import Profile
 from ..schemas.draft import CheckFinding, CheckReport, SectionDraft
@@ -30,10 +31,46 @@ def _f(report: CheckReport, rule: str, severity: str, message: str, *, section: 
                                         basis=basis, provisional=provisional))
 
 
+def supported(token: str, corpus: str) -> bool:
+    """수치 표현(예: '5건')이 근거 글에 같은 수·단위로 있는지. '15건'의 '5건', '6개월'의 '6개'는 근거가 아니다."""
+    tok = re.sub(r"\s+", "", token)
+    m = re.match(r"([\d,.]*\d)(.*)", tok)
+    if m is None:
+        return tok in corpus
+    num, unit = m.group(1), m.group(2)
+    tail = r"(?!월)" if unit == "개" else ""
+    return re.search(r"(?<![\d.,])" + re.escape(num) + r"\s*" + re.escape(unit) + tail, corpus) is not None
+
+
+def rfp_number_sources(rfp: Rfp) -> str:
+    """본문 수치의 근거로 인정할 RFP 글: 추출한 값과 원문 인용 전부, 그리고 RFP에서 바로 셀 수 있는 값
+    (요구사항 건수, 평가 부문·항목 배점, 사업예산의 억 단위 표기)."""
+    parts = [rfp.model_dump_json()]
+    by_prefix: dict[str, int] = {}
+    for r in rfp.requirements:
+        by_prefix[r.prefix or "?"] = by_prefix.get(r.prefix or "?", 0) + 1
+    parts += [f"{n}건" for n in {len(rfp.requirements), *by_prefix.values()}]
+    for a in rfp.evaluation.areas:
+        pts = [a.points] + [it.points for it in a.items]
+        parts += [f"{p:g}점" for p in pts if p is not None]
+    total = sum(a.points or 0 for a in rfp.evaluation.areas)
+    if total:
+        parts.append(f"{total:g}점")
+    if rfp.notice.budget_krw:
+        won = rfp.notice.budget_krw.value
+        parts += [f"{won:,}원", f"{won / 1e8:g}억", f"{won / 1e6:g}백만"]
+    if rfp.notice.period:                    # 사업기간 안의 개월 수(일정표 '3~6개월')는 계획 값이지 사실 주장이 아니다
+        months, assumed = project_months(rfp)
+        if assumed is None:
+            parts += [f"{m}개월" for m in range(1, months + 1)]
+    return " ".join(parts)
+
+
 def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, drafts: list[SectionDraft],
                kb: CompanyKB, profile: Profile, blind: bool, hwpx_path: Path | None, run_id: str,
-               figures: dict | None = None) -> CheckReport:
-    """figures: 도식 렌더 결과(diagram.FigureResult, id별). 쪽수 추정과 FIG-* 점검에 쓴다."""
+               figures: dict | None = None, source_text: str = "") -> CheckReport:
+    """figures: 도식 렌더 결과(diagram.FigureResult, id별). 쪽수 추정과 FIG-* 점검에 쓴다.
+    source_text: RFP 원문 발췌(사업 개요 등). 본문 수치의 근거(FACT-002)로 함께 본다."""
     rep = CheckReport(run_id=run_id)
     by_id = {d.section_id: d for d in drafts}
     nodes = {n.id: n for n in outline.walk()}
@@ -103,17 +140,15 @@ def run_checks(*, rfp: Rfp, outline: Outline, budget: PageBudget, trace: Trace, 
         if d.unresolved_tokens:
             _f(rep, "FACT-001", "blocker", f"{d.number} {d.title}: KB에 없는 토큰 {', '.join(d.unresolved_tokens)}",
                section=d.section_id, basis="KB")
-    rfp_text = " ".join([r.definition + " " + " ".join(r.details) for r in rfp.requirements]
-                        + [c for it in rfp.evaluation.items() for c in it.criteria]
-                        + [rfp.notice.period.value if rfp.notice.period else ""])
+    rfp_text = rfp_number_sources(rfp) + " " + source_text
     kb_values = " ".join(kb.resolve(x) or "" for x in [f.id for f in kb.facts]
                          + [f"{p.id}.{fld}" for p in kb.projects for fld in ("amount_krw", "start", "end")]
                          + [f"{h.id}.years" for h in kb.people])
-    allowed = re.sub(r"\s+", "", rfp_text + " " + kb_values)
+    allowed = rfp_text + " " + kb_values
     for d in drafts:
         if d.origin == "skeleton":
             continue
-        unsupported = sorted({n for n in numbers(d.all_text(figures=False)) if re.sub(r"\s+", "", n) not in allowed})
+        unsupported = sorted({n for n in numbers(d.all_text(figures=False)) if not supported(n, allowed)})
         if unsupported:
             _f(rep, "FACT-002", "major", f"{d.number} {d.title}: 근거(KB·RFP)를 찾지 못한 수치 {', '.join(unsupported[:8])}",
                section=d.section_id, basis="원칙 P2")
